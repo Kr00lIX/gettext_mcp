@@ -1,0 +1,69 @@
+# French translation for example application
+# Copyright (C) 2024
+# This file is distributed under the same license as the example package.
+#
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: fr\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+# Basic greeting
+msgid "Hello"
+msgstr "Bonjour"
+
+# Greeting with name
+msgctxt "greeting"
+msgid "Hello, World!"
+msgstr "Bonjour le monde!"
+
+# Farewell
+msgctxt "farewell"
+msgid "Goodbye"
+msgstr "Au revoir"
+
+# Generic save action
+msgctxt "menu"
+msgid "Save"
+msgstr "Enregistrer"
+
+# Toolbar save button
+msgctxt "button"
+msgid "Save"
+msgstr "Sauvegarder"
+
+# Plural example: files
+msgid "One file"
+msgid_plural "%d files"
+msgstr[0] "Un fichier"
+msgstr[1] "%d fichiers"
+
+# Plural example: items in cart
+msgid "You have one item in your cart"
+msgid_plural "You have %d items in your cart"
+msgstr[0] "Vous avez un article dans votre panier"
+msgstr[1] "Vous avez %d articles dans votre panier"
+
+# Format string with warning
+#, c-format
+msgid "Processing %s"
+msgstr "Traitement de %s"
+
+# Python format string
+#, python-format
+msgid "Value: %(value)s"
+msgstr "Valeur: %(value)s"
+
+# Fuzzy entry (needs review)
+#, fuzzy
+msgid "Review needed"
+msgstr "Examen nécessaire"
+
+# Entry with translator comment
+msgid "Run"
+msgstr "Exécuter"
+
+# Entry with source location info
+#: main.c:42
+msgid "Welcome"
+msgstr "Bienvenue"

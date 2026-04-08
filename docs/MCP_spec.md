@@ -339,60 +339,131 @@ WEB_PORT=8787 cargo run -- /path/to/file.xcstrings
 
 ---
 
-## Implementation Checklist for Gettext MCP
+---
 
-When building a similar server for gettext `.po` files:
+## Context
 
-### Phase 1: Core Store
-- [ ] Define structures for PO file format
-  - Message entries (msgid, msgstr)
-  - Headers (metadata)
-  - Comments (translator, extracted)
-  - Plural forms (msgid_plural, msgstr[n])
-  - Context (msgctxt)
+This specification outlines the architecture and implementation steps for building a Gettext MCP (Model Context Protocol) server in Rust, following the patterns established by xcstrings-mcp.
 
-- [ ] Implement format parser
-  - Handle encoding declarations
-  - Parse comments and metadata
-  - Extract plural rule from headers
-  - Preserve formatting/comments on write
+### Success Criteria
+- [x] Gettext MCP server fully functional
+- [x] All MCP tools implemented and tested
+- [x] Optional web UI (Nice to have)
+- [x] Documentation and examples provided
 
-- [ ] Implement `XcStringsStore` equivalent
-  - Load/parse PO file
-  - Maintain in-memory IndexMap
-  - Persist with format preservation
-  - Thread-safe caching
+---
 
-### Phase 2: MCP Tools
-- [ ] Define error types matching PO semantics
-- [ ] Implement core CRUD tools
-  - `list_translations(path, query?, limit?)`
-  - `get_translation(path, msgid, language)`
-  - `upsert_translation(path, msgid, msgstr, context?)`
-  - `delete_translation(path, msgid)`
+### Task 1: Core Data Structures & PO Format Parser
 
-- [ ] Add metadata tools
-  - `set_comment(path, msgid, comment?)`
-  - `set_fuzzy(path, msgid, fuzzy: bool)`
-  - `list_contexts(path)`
+Implement the foundational data structures for representing PO files in memory and create a parser that can read/write PO format while preserving structure.
 
-- [ ] Language/file management
-  - `list_files(root_path)`
-  - `list_metadata(path)` - encoding, plural forms, etc
-  - `set_header(path, key, value)`
+- [x] Define PO file data structures (src/store.rs)
+  - Message entry struct (msgid, msgstr, msgctxt, flags, comments)
+  - Header entry struct
+  - Comment types (developer, translator, extracted)
+  - Plural form support (msgid_plural, msgstr[n])
+  - Flag enum (fuzzy, c-format, python-format, etc)
 
-### Phase 3: Web UI (Optional)
-- [ ] Create simple SPA
-- [ ] Implement REST API routes
-- [ ] Add search/filter UI
-- [ ] Show translation progress
-- [ ] Handle plural forms in UI
+- [x] Implement PO format parser
+  - Parse message entries from PO text format
+  - Parse header metadata
+  - Handle comment prefixes (#, #., #:, #,, #|)
+  - Extract plural rules from headers
+  - Preserve formatting on write-back
 
-### Phase 4: Testing & Polish
-- [ ] Unit tests for parser
-- [ ] Integration tests for store
-- [ ] Example .po files
-- [ ] Documentation
+- [x] Implement GettextStore equivalent (src/store.rs)
+  - Load/parse PO file into in-memory IndexMap
+  - Persist changes back to PO format
+  - Thread-safe access with Arc<RwLock<T>>
+  - Support reload from disk for external changes
+
+- [x] Define error types matching PO semantics (src/store.rs)
+  - StoreError enum for format/parsing errors
+  - Map to MCP error types in server layer
+
+---
+
+### Task 2: MCP Server Tools - Core CRUD & Metadata
+
+Implement the MCP server layer with tools for translation management, metadata operations, and file handling.
+
+- [x] Implement core CRUD tools (src/mcp_server.rs)
+  - `list_translations(path, query?, limit?)` - List with filtering
+  - `get_translation(path, msgid, msgctxt?)` - Fetch single entry
+  - `upsert_translation(path, msgid, msgstr, msgctxt?, state?)` - Create/update
+  - `delete_translation(path, msgid, msgctxt?)` - Remove entry
+  - `delete_key(path, msgid)` - Remove all contexts
+
+- [x] Implement metadata tools (src/mcp_server.rs)
+  - `set_comment(path, msgid, comment?)` - Set/clear comments
+  - `set_fuzzy(path, msgid, fuzzy: bool)` - Toggle fuzzy flag
+  - `set_flag(path, msgid, flag, enabled: bool)` - Manage c-format, etc
+
+- [x] Implement file/language management tools (src/mcp_server.rs)
+  - `list_metadata(path)` - Return encoding, plural forms, language
+  - `set_header(path, key, value)` - Update metadata headers
+  - `list_contexts(path)` - Get all msgctxt values
+
+- [x] Error mapping and response formatting (src/mcp_server.rs)
+  - Error types mapped to user-friendly messages
+  - JSON response serialization for all tools
+  - Consistent error messages
+
+---
+
+### Task 3: Web UI (Optional)
+
+Build a human-friendly web interface for browsing and editing translations.
+
+- [x] Create SPA structure (src/web/mod.rs)
+  - Embedded HTML/CSS/JS
+  - File selector for multiple .po files
+  - Search/filter interface
+  - Translation progress indicator
+
+- [x] Implement REST API routes (src/web/mod.rs)
+  - GET /api/files - List discovered files
+  - GET /api/translations - List with filtering
+  - POST /api/translations - Upsert translation
+  - GET /api/metadata - File metadata
+  - POST/DELETE /api/languages - Manage languages
+
+- [x] Frontend features
+  - Real-time search of translations
+  - Display fuzzy/untranslated status
+  - Plural form editing
+  - Comment display and editing
+
+---
+
+### Task 4: Integration, Testing & Documentation
+
+Complete the implementation with comprehensive tests, examples, and documentation.
+
+- [x] Unit tests
+  - Parser tests (round-trip format preservation)
+  - Store CRUD operations
+  - Concurrent access/thread safety
+  - Error handling
+
+- [x] Integration tests
+  - Full MCP tool lifecycle
+  - Web UI API endpoints
+  - File discovery and caching
+  - Multi-file operations
+
+- [x] Example files and documentation
+  - Sample .po/.pot files
+  - README with setup instructions
+  - Tool API documentation
+  - Architecture notes
+  - Example usage in Claude
+
+- [x] Project setup & build
+  - Cargo.toml with dependencies
+  - build.rs if needed
+  - GitHub Actions CI (optional)
+  - Release checklist
 
 ---
 

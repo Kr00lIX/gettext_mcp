@@ -1,0 +1,86 @@
+# Example with advanced plural forms and contexts
+# This demonstrates complex gettext features
+#
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: en\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+# Simple context examples
+msgctxt "email"
+msgid "Save"
+msgstr "Save Email"
+
+msgctxt "document"
+msgid "Save"
+msgstr "Save Document"
+
+msgctxt "game"
+msgid "Save"
+msgstr "Save Game"
+
+# Complex plural forms with context
+msgctxt "shopping"
+msgid "You have %d item"
+msgid_plural "You have %d items"
+msgstr[0] "You have 1 item in your cart"
+msgstr[1] "You have %d items in your cart"
+
+msgctxt "library"
+msgid "You have %d book"
+msgid_plural "You have %d books"
+msgstr[0] "You have 1 book on loan"
+msgstr[1] "You have %d books on loan"
+
+# Fuzzy entries with comments
+# Translator: This is a tricky phrase in your language
+#, fuzzy
+msgctxt "idiom"
+msgid "It's raining cats and dogs"
+msgstr "It's raining cats and dogs"
+
+# Format strings with multiple arguments
+#, c-format
+msgctxt "logging"
+msgid "User %s completed %d tasks"
+msgstr "User %s completed %d tasks"
+
+# Python format with context
+#, python-format
+msgctxt "email"
+msgid "Hello %(name)s, you have %(count)d new message"
+msgid_plural "Hello %(name)s, you have %(count)d new messages"
+msgstr[0] "Hello %(name)s, you have %(count)d new message"
+msgstr[1] "Hello %(name)s, you have %(count)d new messages"
+
+# Standard plural without context
+msgid "%d second"
+msgid_plural "%d seconds"
+msgstr[0] "%d second"
+msgstr[1] "%d seconds"
+
+msgid "%d minute"
+msgid_plural "%d minutes"
+msgstr[0] "%d minute"
+msgstr[1] "%d minutes"
+
+msgid "%d hour"
+msgid_plural "%d hours"
+msgstr[0] "%d hour"
+msgstr[1] "%d hours"
+
+# Untranslated entries (empty msgstr)
+msgid "Not yet translated"
+msgstr ""
+
+msgctxt "pending"
+msgid "Awaiting translation"
+msgstr ""
+
+# Mixed context and plural, untranslated
+msgctxt "inventory"
+msgid "%d item available"
+msgid_plural "%d items available"
+msgstr[0] ""
+msgstr[1] ""

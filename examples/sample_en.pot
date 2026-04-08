@@ -1,0 +1,70 @@
+# English template for example application
+# Copyright (C) 2024
+# This file is distributed under the same license as the example package.
+#
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: en\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+# Basic greeting
+msgid "Hello"
+msgstr ""
+
+# Greeting with name
+msgctxt "greeting"
+msgid "Hello, World!"
+msgstr ""
+
+# Farewell
+msgctxt "farewell"
+msgid "Goodbye"
+msgstr ""
+
+# Generic save action
+msgctxt "menu"
+msgid "Save"
+msgstr ""
+
+# Toolbar save button
+msgctxt "button"
+msgid "Save"
+msgstr ""
+
+# Plural example: files
+msgid "One file"
+msgid_plural "%d files"
+msgstr[0] ""
+msgstr[1] ""
+
+# Plural example: items in cart
+msgid "You have one item in your cart"
+msgid_plural "You have %d items in your cart"
+msgstr[0] ""
+msgstr[1] ""
+
+# Format string with warning
+#, c-format
+msgid "Processing %s"
+msgstr ""
+
+# Python format string
+#, python-format
+msgid "Value: %(value)s"
+msgstr ""
+
+# Fuzzy entry (needs review)
+#, fuzzy
+msgid "Review needed"
+msgstr ""
+
+# Entry with translator comment
+# This needs careful translation due to context
+msgid "Run"
+msgstr ""
+
+# Entry with source location info
+#: main.c:42
+msgid "Welcome"
+msgstr ""
