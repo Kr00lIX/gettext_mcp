@@ -20,13 +20,27 @@ A Model Context Protocol (MCP) server for managing GNU gettext .po/.pot files. P
 - Rust 1.70+ (with Cargo)
 - For web UI: environment variables `WEB_PORT` and optionally `WEB_HOST`
 
-### Building
+### Install
 
 ```bash
-cargo build --release
+cargo install --path .
+# This will install `gettext-mcp` into `~/.cargo/bin/`
 ```
 
-The binary will be available at `target/release/gettext-mcp`.
+### Configuration
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "gettext": {
+      "command": "gettext-mcp",
+      "args": ["/path/to/your/priv/gettext"]
+    }
+  }
+}
+```
 
 ## Usage
 

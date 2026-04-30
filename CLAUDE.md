@@ -36,7 +36,7 @@ src/
 ├── main.rs          # Entry point, CLI args, spawns MCP + optional web server
 ├── lib.rs           # Public re-exports
 ├── store.rs         # Parser, serializer, GettextStore, GettextStoreManager
-├── mcp_server.rs    # 11 MCP tool implementations + param types
+├── mcp_server.rs    # 12 MCP tool implementations + ServerHandler stdio wiring
 └── web/
     └── mod.rs       # Axum REST API (10 endpoints) + embedded SPA
 
@@ -54,7 +54,7 @@ examples/
 
 2. **Store** (`store.rs`) — `GettextStore` wraps a single PO file with `Arc<RwLock<GettextFile>>`. CRUD via `get()`, `upsert()`, `upsert_full()`, `delete()`, `delete_by_msgid()`, `update_entry()`. `GettextStoreManager` manages multiple files with path validation and caching.
 
-3. **MCP Server** (`mcp_server.rs`) — 11 tools: `list_translations`, `get_translation`, `upsert_translation`, `delete_translation`, `delete_key`, `set_comment`, `set_fuzzy`, `set_flag`, `list_metadata`, `set_header`, `list_contexts`. All return `Result<serde_json::Value, String>`.
+3. **MCP Server** (`mcp_server.rs`) — 12 tools: `list_translations`, `get_translation`, `upsert_translation`, `delete_translation`, `delete_key`, `set_comment`, `set_fuzzy`, `set_flag`, `list_metadata`, `set_header`, `list_contexts`, `list_files`. Each tool method returns `Result<serde_json::Value, String>`; the `ServerHandler` impl at the bottom of the file wraps them as MCP `CallToolResult`s and the `tools/list` schema is generated from the per-tool `*Params` structs via `schemars`. Stdio transport is wired up in `main.rs` using `rmcp::ServiceExt::serve` over `(stdin, stdout)`.
 
 4. **Web UI** (`web/mod.rs`) — Axum HTTP server with REST API under `/api/` and embedded SPA at `/`. CORS restricted to localhost.
 
@@ -121,7 +121,6 @@ PO format escapes: `\\`, `\"`, `\n`, `\r`, `\t`. Parser unescapes on read, seria
 
 ## Known Limitations
 
-- MCP stdio transport loop in `main.rs` is not yet connected via `rmcp` — currently waits on ctrl_c
 - Store cache is unbounded; needs LRU eviction for long-running servers
 - File writes are not atomic (should write to `.po.tmp` then rename)
 - Web API endpoints have no dedicated test suite (only tested indirectly through store integration tests)

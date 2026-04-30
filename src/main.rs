@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use rmcp::ServiceExt;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging to stderr to avoid interfering with stdio MCP protocol
@@ -52,13 +54,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Web UI enabled at http://{}:{}", host, port);
     }
 
-    // Initialize MCP server
-    let _mcp_server = gettext_mcp::GettextMcpServer::new(Arc::clone(&manager));
+    // Initialize MCP server and serve over stdio
+    let mcp_server = gettext_mcp::GettextMcpServer::new(Arc::clone(&manager));
     eprintln!("Gettext MCP Server initialized and ready for connections");
 
-    // Keep the server running
-    tokio::signal::ctrl_c().await?;
-    eprintln!("Shutting down...");
+    let service = mcp_server
+        .serve((tokio::io::stdin(), tokio::io::stdout()))
+        .await?;
+    let quit_reason = service.waiting().await?;
+    eprintln!("MCP service stopped: {:?}", quit_reason);
 
     Ok(())
 }

@@ -1,7 +1,15 @@
 use crate::store::GettextStoreManager;
+use rmcp::handler::server::tool::schema_for_type;
+use rmcp::model::{
+    CallToolRequestParam, CallToolResult, Content, Implementation, ListToolsResult,
+    PaginatedRequestParam, ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
+};
+use rmcp::service::{RequestContext, RoleServer};
+use rmcp::{ErrorData as McpError, ServerHandler};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde::de::DeserializeOwned;
+use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
 /// MCP Server for Gettext PO files
@@ -478,6 +486,161 @@ pub struct SetHeaderParams {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct ListContextsParams {
     pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+pub struct ListFilesParams {}
+
+// ==================== MCP ServerHandler wiring ====================
+
+fn tool<T: JsonSchema + std::any::Any>(name: &'static str, description: &'static str) -> Tool {
+    Tool::new(name, description, Arc::new(schema_for_type::<T>()))
+}
+
+fn parse_args<T: DeserializeOwned>(
+    name: &str,
+    arguments: Option<Map<String, Value>>,
+) -> Result<T, McpError> {
+    let value = Value::Object(arguments.unwrap_or_default());
+    serde_json::from_value(value).map_err(|e| {
+        McpError::invalid_params(
+            format!("invalid arguments for `{name}`: {e}"),
+            None,
+        )
+    })
+}
+
+fn ok(value: Value) -> CallToolResult {
+    let text = serde_json::to_string(&value).unwrap_or_else(|_| value.to_string());
+    CallToolResult::success(vec![Content::text(text)])
+}
+
+fn err(message: impl Into<String>) -> CallToolResult {
+    CallToolResult::error(vec![Content::text(message.into())])
+}
+
+impl ServerHandler for GettextMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            protocol_version: ProtocolVersion::default(),
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            server_info: Implementation {
+                name: env!("CARGO_PKG_NAME").to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            },
+            instructions: Some(
+                "MCP server for GNU gettext .po/.pot files. \
+                 In dynamic mode (no path given on launch) every tool requires a `path` argument; \
+                 in single-file mode `path` is optional and defaults to the file passed at startup."
+                    .to_string(),
+            ),
+        }
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        let tools = vec![
+            tool::<ListTranslationsParams>(
+                "list_translations",
+                "List translation entries with optional case-insensitive substring `query` and `limit`.",
+            ),
+            tool::<GetTranslationParams>(
+                "get_translation",
+                "Get a single translation entry by `msgid` (and optional `msgctxt`).",
+            ),
+            tool::<UpsertTranslationParams>(
+                "upsert_translation",
+                "Create or update a translation entry. Preserves existing flags/comments when updating.",
+            ),
+            tool::<DeleteTranslationParams>(
+                "delete_translation",
+                "Clear the translation (`msgstr`) for an entry without removing the key.",
+            ),
+            tool::<DeleteKeyParams>(
+                "delete_key",
+                "Remove every entry (across all contexts) with the given `msgid`.",
+            ),
+            tool::<SetCommentParams>(
+                "set_comment",
+                "Set or clear the translator comment for an entry. Pass `comment: null` to clear.",
+            ),
+            tool::<SetFuzzyParams>(
+                "set_fuzzy",
+                "Toggle the `fuzzy` flag on a translation entry.",
+            ),
+            tool::<SetFlagParams>(
+                "set_flag",
+                "Add or remove an arbitrary flag (e.g. `c-format`, `no-wrap`) on an entry.",
+            ),
+            tool::<ListMetadataParams>(
+                "list_metadata",
+                "List all PO header metadata entries (Language, Plural-Forms, etc.).",
+            ),
+            tool::<SetHeaderParams>(
+                "set_header",
+                "Set or remove a single PO header entry. Pass `value: null` to remove.",
+            ),
+            tool::<ListContextsParams>(
+                "list_contexts",
+                "List all distinct `msgctxt` values used in the file.",
+            ),
+            tool::<ListFilesParams>(
+                "list_files",
+                "List all .po/.pot files discovered in directory mode.",
+            ),
+        ];
+        Ok(ListToolsResult {
+            tools,
+            next_cursor: None,
+        })
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let CallToolRequestParam { name, arguments } = request;
+        let result: Result<Value, String> = match name.as_ref() {
+            "list_translations" => {
+                self.list_translations(parse_args(&name, arguments)?).await
+            }
+            "get_translation" => {
+                self.get_translation(parse_args(&name, arguments)?).await
+            }
+            "upsert_translation" => {
+                self.upsert_translation(parse_args(&name, arguments)?).await
+            }
+            "delete_translation" => {
+                self.delete_translation(parse_args(&name, arguments)?).await
+            }
+            "delete_key" => self.delete_key(parse_args(&name, arguments)?).await,
+            "set_comment" => self.set_comment(parse_args(&name, arguments)?).await,
+            "set_fuzzy" => self.set_fuzzy(parse_args(&name, arguments)?).await,
+            "set_flag" => self.set_flag(parse_args(&name, arguments)?).await,
+            "list_metadata" => self.list_metadata(parse_args(&name, arguments)?).await,
+            "set_header" => self.set_header(parse_args(&name, arguments)?).await,
+            "list_contexts" => self.list_contexts(parse_args(&name, arguments)?).await,
+            "list_files" => {
+                let _: ListFilesParams = parse_args(&name, arguments)?;
+                self.list_files().await
+            }
+            other => {
+                return Err(McpError::invalid_params(
+                    format!("unknown tool: `{other}`"),
+                    None,
+                ));
+            }
+        };
+
+        Ok(match result {
+            Ok(value) => ok(value),
+            Err(message) => err(message),
+        })
+    }
 }
 
 #[cfg(test)]
