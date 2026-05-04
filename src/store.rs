@@ -389,6 +389,40 @@ pub mod parser {
         result
     }
 
+    /// Emit `keyword "value"` (or the multi-line form for values containing
+    /// newlines, as conventional gettext tools produce). The multi-line form
+    /// is required for round-trip readability of headers like
+    /// `msgstr ""` followed by one continuation line per `Key: Value\n` entry.
+    fn write_quoted(output: &mut String, keyword: &str, value: &str) {
+        if !value.contains('\n') {
+            output.push_str(keyword);
+            output.push_str(" \"");
+            output.push_str(&escape_po_string(value));
+            output.push_str("\"\n");
+            return;
+        }
+
+        output.push_str(keyword);
+        output.push_str(" \"\"\n");
+        let mut start = 0;
+        let bytes = value.as_bytes();
+        for i in 0..bytes.len() {
+            if bytes[i] == b'\n' {
+                let chunk = &value[start..=i];
+                output.push('"');
+                output.push_str(&escape_po_string(chunk));
+                output.push_str("\"\n");
+                start = i + 1;
+            }
+        }
+        if start < value.len() {
+            let chunk = &value[start..];
+            output.push('"');
+            output.push_str(&escape_po_string(chunk));
+            output.push_str("\"\n");
+        }
+    }
+
     pub fn serialize_po(file: &GettextFile) -> String {
         let mut output = String::new();
 
@@ -429,28 +463,18 @@ pub mod parser {
 
             // Write message
             if let Some(ctx) = msgctxt {
-                output.push_str("msgctxt \"");
-                output.push_str(&escape_po_string(ctx));
-                output.push_str("\"\n");
+                write_quoted(&mut output, "msgctxt", ctx);
             }
-            output.push_str("msgid \"");
-            output.push_str(&escape_po_string(msgid));
-            output.push_str("\"\n");
+            write_quoted(&mut output, "msgid", msgid);
 
             if let Some(plural) = &entry.msgid_plural {
-                output.push_str("msgid_plural \"");
-                output.push_str(&escape_po_string(plural));
-                output.push_str("\"\n");
+                write_quoted(&mut output, "msgid_plural", plural);
 
                 for (idx, trans) in entry.msgstr_plural.iter().enumerate() {
-                    output.push_str(&format!("msgstr[{}] \"", idx));
-                    output.push_str(&escape_po_string(trans));
-                    output.push_str("\"\n");
+                    write_quoted(&mut output, &format!("msgstr[{}]", idx), trans);
                 }
             } else {
-                output.push_str("msgstr \"");
-                output.push_str(&escape_po_string(&entry.msgstr));
-                output.push_str("\"\n");
+                write_quoted(&mut output, "msgstr", &entry.msgstr);
             }
 
             output.push('\n');
@@ -1442,10 +1466,14 @@ msgstr "Actif"
         });
 
         let serialized = parser::serialize_po(&file);
-        assert!(serialized.contains(r#"msgid "Line one\nLine two""#));
-        assert!(serialized.contains(r#"msgstr "Ligne un\nLigne deux""#));
+        // Strings with embedded newlines use the conventional multi-line form:
+        //     msgid ""
+        //     "Line one\n"
+        //     "Line two"
+        assert!(serialized.contains("msgid \"\"\n\"Line one\\n\"\n\"Line two\""));
+        assert!(serialized.contains("msgstr \"\"\n\"Ligne un\\n\"\n\"Ligne deux\""));
 
-        // Parse back and verify
+        // Parse back and verify the value round-trips intact
         let reparsed = parser::parse_po(&serialized).expect("Failed to reparse");
         let entry = reparsed.entries.get(&("Line one\nLine two".to_string(), None)).unwrap();
         assert_eq!(entry.msgstr, "Ligne un\nLigne deux");
@@ -1533,6 +1561,146 @@ msgstr "Actif"
         let serialized = parser::serialize_po(&file);
         assert!(serialized.contains("#~ msgid \"Old\""));
         assert!(serialized.contains("#~ msgstr \"Ancien\""));
+    }
+
+    #[test]
+    fn test_full_header_metadata_roundtrip() {
+        // Real-world Crowdin-managed Swedish PO header. Verifies every key is
+        // parsed, the original insertion order is kept, the multi-line
+        // serialization form is used, and the file is byte-stable across a
+        // second serialize/parse cycle.
+        let input = "msgid \"\"\n\
+            msgstr \"\"\n\
+            \"Language: sv\\n\"\n\
+            \"Plural-Forms: nplurals=2; plural=(n != 1);\\n\"\n\
+            \"X-Crowdin-Project: eyr-phoenix\\n\"\n\
+            \"X-Crowdin-Project-ID: 695599\\n\"\n\
+            \"X-Crowdin-Language: sv-SE\\n\"\n\
+            \"X-Crowdin-File: errors.po\\n\"\n\
+            \"X-Crowdin-File-ID: 22\\n\"\n\
+            \"Project-Id-Version: eyr-phoenix\\n\"\n\
+            \"Content-Type: text/plain; charset=UTF-8\\n\"\n\
+            \"Language-Team: Swedish\\n\"\n\
+            \"PO-Revision-Date: 2026-04-20 10:51\\n\"\n\
+            \n\
+            msgid \"Hello\"\n\
+            msgstr \"Hej\"\n";
+
+        let parsed = parser::parse_po(input).expect("parse");
+        let expected_order = [
+            ("Language", "sv"),
+            ("Plural-Forms", "nplurals=2; plural=(n != 1);"),
+            ("X-Crowdin-Project", "eyr-phoenix"),
+            ("X-Crowdin-Project-ID", "695599"),
+            ("X-Crowdin-Language", "sv-SE"),
+            ("X-Crowdin-File", "errors.po"),
+            ("X-Crowdin-File-ID", "22"),
+            ("Project-Id-Version", "eyr-phoenix"),
+            ("Content-Type", "text/plain; charset=UTF-8"),
+            ("Language-Team", "Swedish"),
+            ("PO-Revision-Date", "2026-04-20 10:51"),
+        ];
+        let actual: Vec<(&str, &str)> = parsed
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        assert_eq!(actual, expected_order);
+
+        let serialized = parser::serialize_po(&parsed);
+        // Multi-line header form must be preserved, not collapsed onto one line.
+        assert!(serialized.contains("msgstr \"\"\n\"Language: sv\\n\""));
+        assert!(serialized.contains("\"PO-Revision-Date: 2026-04-20 10:51\\n\""));
+        assert!(!serialized.contains("Language: sv\\nPlural-Forms"));
+
+        // Re-parsing the serialized output yields the same metadata in the same order.
+        let reparsed = parser::parse_po(&serialized).expect("reparse");
+        let reparsed_order: Vec<(&str, &str)> = reparsed
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        assert_eq!(reparsed_order, expected_order);
+
+        // serialize → parse → serialize is now a fixed point.
+        assert_eq!(serialized, parser::serialize_po(&reparsed));
+    }
+
+    #[test]
+    fn test_arbitrary_headers_roundtrip() {
+        // Header storage is an open key/value map: the standard gettext fields,
+        // arbitrary `X-*` extensions, and unknown vendor keys must all survive
+        // parse + serialize without being dropped, reordered, or normalized.
+        let input = "msgid \"\"\n\
+            msgstr \"\"\n\
+            \"Project-Id-Version: my-app 1.2.3\\n\"\n\
+            \"Report-Msgid-Bugs-To: bugs@example.com\\n\"\n\
+            \"POT-Creation-Date: 2026-01-15 09:00+0000\\n\"\n\
+            \"PO-Revision-Date: 2026-04-20 10:51+0200\\n\"\n\
+            \"Last-Translator: Anna Andersson <anna@example.com>\\n\"\n\
+            \"Language-Team: Swedish <sv@li.org>\\n\"\n\
+            \"Language: sv_SE\\n\"\n\
+            \"MIME-Version: 1.0\\n\"\n\
+            \"Content-Type: text/plain; charset=UTF-8\\n\"\n\
+            \"Content-Transfer-Encoding: 8bit\\n\"\n\
+            \"Plural-Forms: nplurals=2; plural=(n != 1);\\n\"\n\
+            \"X-Generator: Poedit 3.4.2\\n\"\n\
+            \"X-Poedit-SourceCharset: UTF-8\\n\"\n\
+            \"X-Poedit-Basepath: ../..\\n\"\n\
+            \"X-Crowdin-Project: my-app\\n\"\n\
+            \"X-Custom-Vendor-Header: anything goes here\\n\"\n\
+            \"X-Empty-Value: \\n\"\n\
+            \"Some-Unknown-Key: value with: embedded colons and ; semicolons\\n\"\n\
+            \n";
+
+        let parsed = parser::parse_po(input).expect("parse");
+        let keys: Vec<&str> = parsed.metadata.keys().map(String::as_str).collect();
+        let expected_keys = [
+            "Project-Id-Version",
+            "Report-Msgid-Bugs-To",
+            "POT-Creation-Date",
+            "PO-Revision-Date",
+            "Last-Translator",
+            "Language-Team",
+            "Language",
+            "MIME-Version",
+            "Content-Type",
+            "Content-Transfer-Encoding",
+            "Plural-Forms",
+            "X-Generator",
+            "X-Poedit-SourceCharset",
+            "X-Poedit-Basepath",
+            "X-Crowdin-Project",
+            "X-Custom-Vendor-Header",
+            "X-Empty-Value",
+            "Some-Unknown-Key",
+        ];
+        assert_eq!(keys, expected_keys);
+
+        // Spot-check awkward values: empty value, embedded colons in value,
+        // angle-bracketed email, and a `;`-separated MIME content type.
+        assert_eq!(parsed.metadata.get("X-Empty-Value").map(String::as_str), Some(""));
+        assert_eq!(
+            parsed.metadata.get("Some-Unknown-Key").map(String::as_str),
+            Some("value with: embedded colons and ; semicolons"),
+        );
+        assert_eq!(
+            parsed.metadata.get("Last-Translator").map(String::as_str),
+            Some("Anna Andersson <anna@example.com>"),
+        );
+        assert_eq!(
+            parsed.metadata.get("Content-Type").map(String::as_str),
+            Some("text/plain; charset=UTF-8"),
+        );
+
+        // serialize → parse must be a fixed point in metadata order and values.
+        let serialized = parser::serialize_po(&parsed);
+        let reparsed = parser::parse_po(&serialized).expect("reparse");
+        let reparsed_keys: Vec<&str> = reparsed.metadata.keys().map(String::as_str).collect();
+        assert_eq!(reparsed_keys, expected_keys);
+        for key in expected_keys {
+            assert_eq!(parsed.metadata.get(key), reparsed.metadata.get(key), "key {key}");
+        }
     }
 
     // ==================== Store Edge Cases ====================

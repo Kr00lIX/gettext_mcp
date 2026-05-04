@@ -318,10 +318,9 @@ impl GettextMcpServer {
 
         let metadata = store.metadata().await.map_err(|e| e.to_string())?;
         let language = metadata.get("Language").cloned();
-        let metadata_map: std::collections::BTreeMap<String, String> = metadata.into_iter().collect();
 
         Ok(json!({
-            "metadata": metadata_map,
+            "metadata": metadata,
             "language": language,
         }))
     }
