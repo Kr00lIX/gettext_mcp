@@ -24,6 +24,7 @@ use tracing::error;
 
 use crate::service::GettextStoreManager;
 use crate::tools::{
+    coverage::{handle_get_coverage, GetCoverageParams},
     crud::{
         handle_delete_key, handle_delete_translation, handle_get_translation,
         handle_list_translations, handle_upsert_translation, DeleteKeyParams,
@@ -33,6 +34,10 @@ use crate::tools::{
     discover::{
         handle_list_contexts, handle_list_files, ListContextsParams, ListFilesParams,
     },
+    discover_files::{handle_discover_files, DiscoverFilesParams},
+    extract::{
+        handle_get_stale, handle_get_untranslated, GetStaleParams, GetUntranslatedParams,
+    },
     header::{
         handle_list_metadata, handle_set_header, ListMetadataParams, SetHeaderParams,
     },
@@ -40,6 +45,8 @@ use crate::tools::{
         handle_set_comment, handle_set_flag, handle_set_fuzzy, SetCommentParams, SetFlagParams,
         SetFuzzyParams,
     },
+    search::{handle_search_keys, SearchKeysParams},
+    validate::{handle_validate_translations, ValidateTranslationsParams},
 };
 
 /// MCP server for GNU gettext `.po`/`.pot` files. Holds the shared store
@@ -284,6 +291,114 @@ impl GettextMcpServer {
             }
         }
     }
+
+    #[tool(
+        name = "get_coverage",
+        description = "Compute translation coverage stats (translated/untranslated/fuzzy/obsolete counts and percentages). Fuzzy entries with non-empty msgstr count as both fuzzy and translated. Obsolete entries are excluded from total and percentages."
+    )]
+    async fn get_coverage(
+        &self,
+        Parameters(params): Parameters<GetCoverageParams>,
+    ) -> Result<String, String> {
+        match handle_get_coverage(&self.manager, params).await {
+            Ok(value) => serde_json::to_string_pretty(&value)
+                .map_err(|e| format!("serialization error: {e}")),
+            Err(e) => {
+                error!(error = %e, "get_coverage failed");
+                Err(e.to_string())
+            }
+        }
+    }
+
+    #[tool(
+        name = "get_untranslated",
+        description = "Paginated list of entries with empty msgstr or fuzzy flag. Each entry includes `needs_plural_forms` (CLDR plural categories) when msgid_plural is set."
+    )]
+    async fn get_untranslated(
+        &self,
+        Parameters(params): Parameters<GetUntranslatedParams>,
+    ) -> Result<String, String> {
+        match handle_get_untranslated(&self.manager, params).await {
+            Ok(value) => serde_json::to_string_pretty(&value)
+                .map_err(|e| format!("serialization error: {e}")),
+            Err(e) => {
+                error!(error = %e, "get_untranslated failed");
+                Err(e.to_string())
+            }
+        }
+    }
+
+    #[tool(
+        name = "get_stale",
+        description = "Paginated list of obsolete (`#~`) entries kept in the file but no longer used by source code."
+    )]
+    async fn get_stale(
+        &self,
+        Parameters(params): Parameters<GetStaleParams>,
+    ) -> Result<String, String> {
+        match handle_get_stale(&self.manager, params).await {
+            Ok(value) => serde_json::to_string_pretty(&value)
+                .map_err(|e| format!("serialization error: {e}")),
+            Err(e) => {
+                error!(error = %e, "get_stale failed");
+                Err(e.to_string())
+            }
+        }
+    }
+
+    #[tool(
+        name = "validate_translations",
+        description = "Run validation checks (format specifier mismatches, plural form count, empty translations, identical translations) and return findings grouped by severity (error/warning/info)."
+    )]
+    async fn validate_translations(
+        &self,
+        Parameters(params): Parameters<ValidateTranslationsParams>,
+    ) -> Result<String, String> {
+        match handle_validate_translations(&self.manager, params).await {
+            Ok(value) => serde_json::to_string_pretty(&value)
+                .map_err(|e| format!("serialization error: {e}")),
+            Err(e) => {
+                error!(error = %e, "validate_translations failed");
+                Err(e.to_string())
+            }
+        }
+    }
+
+    #[tool(
+        name = "search_keys",
+        description = "Paginated case-insensitive substring search across msgid/msgstr/msgctxt/comment fields. Empty pattern returns all entries."
+    )]
+    async fn search_keys(
+        &self,
+        Parameters(params): Parameters<SearchKeysParams>,
+    ) -> Result<String, String> {
+        match handle_search_keys(&self.manager, params).await {
+            Ok(value) => serde_json::to_string_pretty(&value)
+                .map_err(|e| format!("serialization error: {e}")),
+            Err(e) => {
+                error!(error = %e, "search_keys failed");
+                Err(e.to_string())
+            }
+        }
+    }
+
+    #[tool(
+        name = "discover_files",
+        description = "Recursively scan a directory for .po/.pot files. Independent of directory mode; skips hidden and well-known build directories (.git, node_modules, target, ...)."
+    )]
+    async fn discover_files(
+        &self,
+        Parameters(params): Parameters<DiscoverFilesParams>,
+    ) -> Result<String, String> {
+        match handle_discover_files(&self.manager, params).await {
+            Ok(value) => serde_json::to_string_pretty(&value)
+                .map_err(|e| format!("serialization error: {e}")),
+            Err(e) => {
+                error!(error = %e, "discover_files failed");
+                Err(e.to_string())
+            }
+        }
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -300,7 +415,11 @@ impl ServerHandler for GettextMcpServer {
         .with_instructions(
             "MCP server for GNU gettext .po/.pot files. \
              In dynamic mode (no path given on launch) every tool requires a `path` argument; \
-             in single-file mode `path` is optional and defaults to the file passed at startup.",
+             in single-file mode `path` is optional and defaults to the file passed at startup. \
+             Additional tools: `get_coverage` (stats), `get_untranslated` and `get_stale` \
+             (paginated review queues), `validate_translations` (format/plural/empty checks), \
+             `search_keys` (paginated search), and `discover_files` (scan a directory for \
+             .po/.pot files).",
         )
     }
 }

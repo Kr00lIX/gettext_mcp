@@ -352,6 +352,41 @@ impl GettextStore {
         self.set_header("Language", language).await
     }
 
+    /// Parse the preserved obsolete (`#~`) lines into structured
+    /// [`MessageEntry`] values.
+    ///
+    /// Obsolete entries are stored verbatim in [`GettextFile::obsolete_lines`]
+    /// for round-trip fidelity; this method strips the `#~ ` prefix from
+    /// each line and runs the rebuilt source through [`parser::parse_po`]
+    /// so we can surface obsolete entries to callers without disturbing
+    /// the serializer.
+    pub async fn obsolete_entries(&self) -> Result<Vec<MessageEntry>, GettextError> {
+        let data = self.data.read().await;
+        if data.obsolete_lines.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Drop the leading "#~" (and optional single space) from each
+        // line, then concatenate to obtain plain PO source.
+        let mut body = String::new();
+        for line in &data.obsolete_lines {
+            let stripped = line.strip_prefix("#~").unwrap_or(line);
+            let stripped = stripped.strip_prefix(' ').unwrap_or(stripped);
+            body.push_str(stripped);
+            body.push('\n');
+        }
+        // Trailing blank line to flush the final entry.
+        body.push('\n');
+
+        let parsed = parser::parse_po(&body)?;
+        Ok(parsed
+            .entries
+            .into_iter()
+            .filter(|((msgid, msgctxt), _)| !(msgid.is_empty() && msgctxt.is_none()))
+            .map(|(_, e)| e)
+            .collect())
+    }
+
     /// Remove the `Language` header, but only if it currently matches the
     /// supplied value. Mismatches return [`GettextError::InvalidInput`].
     pub async fn remove_language(&self, language: &str) -> Result<(), GettextError> {
