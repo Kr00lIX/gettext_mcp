@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use std::net::SocketAddr;
 
-use crate::store::GettextStoreManager;
+use crate::service::GettextStoreManager;
 
 /// Web server configuration
 pub struct WebConfig {
@@ -240,7 +240,7 @@ async fn list_translations(
                 let q_lower = query.to_lowercase();
                 msgid.to_lowercase().contains(&q_lower)
                     || entry.msgstr.to_lowercase().contains(&q_lower)
-                    || entry.msgid_plural.as_deref().map_or(false, |p| p.to_lowercase().contains(&q_lower))
+                    || entry.msgid_plural.as_deref().is_some_and(|p| p.to_lowercase().contains(&q_lower))
                     || entry.msgstr_plural.iter().any(|p| p.to_lowercase().contains(&q_lower))
             } else {
                 true
