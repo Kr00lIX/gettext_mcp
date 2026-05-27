@@ -1,15 +1,15 @@
 use axum::{
-    extract::{Query, State, Path},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post, delete},
-    Router, Json,
+    routing::{delete, get, post},
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
-use std::net::SocketAddr;
 
 use crate::service::GettextStoreManager;
 
@@ -120,15 +120,29 @@ pub async fn serve(config: WebConfig) -> Result<(), Box<dyn std::error::Error>> 
         .route("/api/languages", get(list_languages))
         .route("/api/languages", post(add_language))
         .route("/api/languages/{language}", delete(remove_language))
-        .layer(CorsLayer::new()
-            .allow_origin([
-                "http://localhost".parse::<axum::http::HeaderValue>().unwrap(),
-                "http://127.0.0.1".parse::<axum::http::HeaderValue>().unwrap(),
-                format!("http://localhost:{}", config.addr.port()).parse::<axum::http::HeaderValue>().unwrap(),
-                format!("http://127.0.0.1:{}", config.addr.port()).parse::<axum::http::HeaderValue>().unwrap(),
-            ])
-            .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::DELETE])
-            .allow_headers([axum::http::header::CONTENT_TYPE]))
+        .layer(
+            CorsLayer::new()
+                .allow_origin([
+                    "http://localhost"
+                        .parse::<axum::http::HeaderValue>()
+                        .unwrap(),
+                    "http://127.0.0.1"
+                        .parse::<axum::http::HeaderValue>()
+                        .unwrap(),
+                    format!("http://localhost:{}", config.addr.port())
+                        .parse::<axum::http::HeaderValue>()
+                        .unwrap(),
+                    format!("http://127.0.0.1:{}", config.addr.port())
+                        .parse::<axum::http::HeaderValue>()
+                        .unwrap(),
+                ])
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::DELETE,
+                ])
+                .allow_headers([axum::http::header::CONTENT_TYPE]),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(config.addr).await?;
@@ -240,8 +254,14 @@ async fn list_translations(
                 let q_lower = query.to_lowercase();
                 msgid.to_lowercase().contains(&q_lower)
                     || entry.msgstr.to_lowercase().contains(&q_lower)
-                    || entry.msgid_plural.as_deref().is_some_and(|p| p.to_lowercase().contains(&q_lower))
-                    || entry.msgstr_plural.iter().any(|p| p.to_lowercase().contains(&q_lower))
+                    || entry
+                        .msgid_plural
+                        .as_deref()
+                        .is_some_and(|p| p.to_lowercase().contains(&q_lower))
+                    || entry
+                        .msgstr_plural
+                        .iter()
+                        .any(|p| p.to_lowercase().contains(&q_lower))
             } else {
                 true
             }
@@ -298,8 +318,16 @@ async fn get_translation(
         is_translated: entry.is_translated(),
         is_fuzzy: entry.is_fuzzy(),
         flags: entry.flags.clone(),
-        extracted_comment: if entry.extracted_comment.is_empty() { None } else { Some(entry.extracted_comment.join("\n")) },
-        translator_comment: if entry.translator_comment.is_empty() { None } else { Some(entry.translator_comment.join("\n")) },
+        extracted_comment: if entry.extracted_comment.is_empty() {
+            None
+        } else {
+            Some(entry.extracted_comment.join("\n"))
+        },
+        translator_comment: if entry.translator_comment.is_empty() {
+            None
+        } else {
+            Some(entry.translator_comment.join("\n"))
+        },
         source_locations: entry.source_locations.clone(),
     };
 
@@ -376,9 +404,9 @@ async fn get_metadata(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(Metadata {
-        encoding: metadata.get("Content-Type").and_then(|ct| {
-            ct.split("charset=").nth(1).map(|s| s.trim().to_string())
-        }),
+        encoding: metadata
+            .get("Content-Type")
+            .and_then(|ct| ct.split("charset=").nth(1).map(|s| s.trim().to_string())),
         language: metadata.get("Language").cloned(),
         plural_forms: metadata.get("Plural-Forms").cloned(),
     }))

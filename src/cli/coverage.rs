@@ -105,7 +105,10 @@ mod tests {
         let path = dir.path().join("messages.po");
         std::fs::write(&path, sample_po()).unwrap();
         let code = run(Some(path), true);
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
+        );
     }
 
     #[test]
@@ -114,6 +117,9 @@ mod tests {
         let path = dir.path().join("messages.po");
         std::fs::write(&path, sample_po()).unwrap();
         let code = run(Some(path), false);
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
+        );
     }
 }

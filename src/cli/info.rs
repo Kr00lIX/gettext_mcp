@@ -55,10 +55,7 @@ pub fn run(path: Option<PathBuf>, json: bool) -> ExitCode {
         .unwrap_or_else(|| resolved.display().to_string());
     println!("File: {file_name}");
     println!("Path: {}", resolved.display());
-    println!(
-        "Language: {}",
-        language.as_deref().unwrap_or("(unset)")
-    );
+    println!("Language: {}", language.as_deref().unwrap_or("(unset)"));
     println!("Total entries: {total}");
     println!("Translated:    {translated}");
     println!("Fuzzy:         {fuzzy}");
@@ -109,7 +106,10 @@ mod tests {
         let path = dir.path().join("messages.po");
         std::fs::write(&path, sample_po()).unwrap();
         let code = run(Some(path), false);
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
+        );
     }
 
     #[test]
@@ -118,6 +118,9 @@ mod tests {
         let path = dir.path().join("messages.po");
         std::fs::write(&path, sample_po()).unwrap();
         let code = run(Some(path), true);
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
+        );
     }
 }

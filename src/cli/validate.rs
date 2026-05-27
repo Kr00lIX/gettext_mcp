@@ -136,6 +136,9 @@ mod tests {
         )
         .unwrap();
         let code = run(Some(path), true);
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
+        );
     }
 }

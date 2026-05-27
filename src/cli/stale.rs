@@ -58,13 +58,14 @@ fn parse_obsolete(content: &str) -> Vec<serde_json::Value> {
     let mut current_msgid: Option<String> = None;
     let mut current_msgstr: Option<String> = None;
 
-    let flush =
-        |msgid: &mut Option<String>, msgstr: &mut Option<String>, out: &mut Vec<serde_json::Value>| {
-            if let Some(id) = msgid.take() {
-                let val = msgstr.take().unwrap_or_default();
-                out.push(json!({ "msgid": id, "msgstr": val }));
-            }
-        };
+    let flush = |msgid: &mut Option<String>,
+                 msgstr: &mut Option<String>,
+                 out: &mut Vec<serde_json::Value>| {
+        if let Some(id) = msgid.take() {
+            let val = msgstr.take().unwrap_or_default();
+            out.push(json!({ "msgid": id, "msgstr": val }));
+        }
+    };
 
     for line in content.lines() {
         let trimmed = line.trim_start();
@@ -105,7 +106,10 @@ mod tests {
         )
         .unwrap();
         let code = run(Some(path), true);
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
+        );
     }
 
     #[test]

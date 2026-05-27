@@ -160,7 +160,11 @@ pub fn count_skipped(file: &GettextFile, include_translated: bool) -> ExportCoun
         counts.unit_count += 1;
     }
 
-    counts.skipped_obsolete = file.obsolete_lines.iter().filter(|l| l.contains("msgid")).count();
+    counts.skipped_obsolete = file
+        .obsolete_lines
+        .iter()
+        .filter(|l| l.contains("msgid"))
+        .count();
 
     counts
 }
@@ -262,10 +266,7 @@ fn merged_comment(entry: &crate::model::MessageEntry) -> Option<String> {
     }
 }
 
-fn write_event(
-    writer: &mut Writer<Cursor<Vec<u8>>>,
-    event: Event<'_>,
-) -> Result<(), GettextError> {
+fn write_event(writer: &mut Writer<Cursor<Vec<u8>>>, event: Event<'_>) -> Result<(), GettextError> {
     writer
         .write_event(event)
         .map_err(|e| GettextError::InvalidFormat(format!("XLIFF write error: {e}")))
@@ -711,10 +712,7 @@ mod tests {
     #[test]
     fn count_skipped_includes_obsolete_lines_with_msgid() {
         let mut f = GettextFile::new();
-        f.obsolete_lines = vec![
-            "#~ msgid \"Old\"".into(),
-            "#~ msgstr \"Ancien\"".into(),
-        ];
+        f.obsolete_lines = vec!["#~ msgid \"Old\"".into(), "#~ msgstr \"Ancien\"".into()];
         f.entries.insert(
             ("Live".into(), None),
             MessageEntry {

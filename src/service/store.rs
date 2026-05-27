@@ -179,7 +179,9 @@ impl GettextStore {
         if let Some(ref flags) = flags {
             for flag in flags {
                 if flag.is_empty()
-                    || !flag.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+                    || !flag
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
                 {
                     return Err(GettextError::InvalidInput(format!(
                         "Invalid flag '{}': only alphanumeric characters, hyphens, and underscores are allowed",
@@ -713,7 +715,8 @@ mod tests {
     async fn loading_preserves_bom_stripped_content() {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("bom.po");
-        let body = "msgid \"\"\nmsgstr \"\"\n\"Language: en\\n\"\n\nmsgid \"Hello\"\nmsgstr \"Bonjour\"\n";
+        let body =
+            "msgid \"\"\nmsgstr \"\"\n\"Language: en\\n\"\n\nmsgid \"Hello\"\nmsgstr \"Bonjour\"\n";
         let with_bom = format!("\u{feff}{body}");
         std::fs::write(&path, with_bom.as_bytes()).unwrap();
 

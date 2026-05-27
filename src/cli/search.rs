@@ -102,6 +102,9 @@ mod tests {
         )
         .unwrap();
         let code = run("Hello".into(), Some(path), 50, true);
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
+        );
     }
 }

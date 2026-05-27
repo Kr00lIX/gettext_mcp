@@ -10,7 +10,7 @@ use std::time::SystemTime;
 
 use crate::error::GettextError;
 
-pub use fs::{FsFileStore, cleanup_orphan_tmps};
+pub use fs::{cleanup_orphan_tmps, FsFileStore};
 
 /// File I/O contract used by [`crate::service::store::GettextStore`].
 ///

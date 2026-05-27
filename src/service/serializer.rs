@@ -262,10 +262,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        file.obsolete_lines = vec![
-            "#~ msgid \"Old\"".into(),
-            "#~ msgstr \"Ancien\"".into(),
-        ];
+        file.obsolete_lines = vec!["#~ msgid \"Old\"".into(), "#~ msgstr \"Ancien\"".into()];
 
         let serialized = serialize_po(&file);
         assert!(serialized.contains("#~ msgid \"Old\""));

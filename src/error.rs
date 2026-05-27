@@ -55,11 +55,7 @@ pub type StoreError = GettextError;
 
 impl From<GettextError> for rmcp::model::ErrorData {
     fn from(e: GettextError) -> Self {
-        rmcp::model::ErrorData::new(
-            rmcp::model::ErrorCode::INTERNAL_ERROR,
-            e.to_string(),
-            None,
-        )
+        rmcp::model::ErrorData::new(rmcp::model::ErrorCode::INTERNAL_ERROR, e.to_string(), None)
     }
 }
 

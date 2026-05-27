@@ -7,10 +7,7 @@ async fn test_web_config_creation() {
     let manager = Arc::new(GettextStoreManager::new(None));
     let addr: SocketAddr = "127.0.0.1:8787".parse().unwrap();
 
-    let config = WebConfig {
-        addr,
-        manager,
-    };
+    let config = WebConfig { addr, manager };
 
     assert_eq!(config.addr.port(), 8787);
 }
@@ -54,14 +51,17 @@ async fn test_store_upsert_full() {
     let store = manager.store_for(None).await.unwrap();
 
     // Test upsert_full with plural forms
-    store.upsert_full(
-        "apples",
-        None,
-        "1 pomme",
-        Some("apples"),
-        Some(vec!["1 pomme".to_string(), "%d pommes".to_string()]),
-        None,
-    ).await.unwrap();
+    store
+        .upsert_full(
+            "apples",
+            None,
+            "1 pomme",
+            Some("apples"),
+            Some(vec!["1 pomme".to_string(), "%d pommes".to_string()]),
+            None,
+        )
+        .await
+        .unwrap();
 
     // Verify it was stored
     let entry = store.get("apples", None).await.unwrap();
@@ -82,12 +82,18 @@ async fn test_store_get_metadata() {
 
     // Set some metadata
     store.set_header("Language", "fr").await.unwrap();
-    store.set_header("Content-Type", "text/plain; charset=UTF-8").await.unwrap();
+    store
+        .set_header("Content-Type", "text/plain; charset=UTF-8")
+        .await
+        .unwrap();
 
     // Retrieve metadata
     let metadata = store.metadata().await.unwrap();
     assert_eq!(metadata.get("Language"), Some(&"fr".to_string()));
-    assert_eq!(metadata.get("Content-Type"), Some(&"text/plain; charset=UTF-8".to_string()));
+    assert_eq!(
+        metadata.get("Content-Type"),
+        Some(&"text/plain; charset=UTF-8".to_string())
+    );
 }
 
 #[tokio::test]
@@ -129,8 +135,10 @@ async fn test_store_concurrent_access() {
         let handle = task::spawn(async move {
             let msgid = format!("message_{}", i);
             let msgstr = format!("translation_{}", i);
-            store_clone.upsert(&msgid, None, &msgstr, None)
-                .await.unwrap();
+            store_clone
+                .upsert(&msgid, None, &msgstr, None)
+                .await
+                .unwrap();
         });
         handles.push(handle);
     }
@@ -149,7 +157,11 @@ async fn test_store_concurrent_access() {
         let expected_msgid = format!("message_{}", i);
         let expected_msgstr = format!("translation_{}", i);
         let entry = store.get(&expected_msgid, None).await.unwrap();
-        assert_eq!(entry.msgstr, expected_msgstr, "Entry {} has wrong translation", i);
+        assert_eq!(
+            entry.msgstr, expected_msgstr,
+            "Entry {} has wrong translation",
+            i
+        );
     }
 }
 
@@ -166,7 +178,10 @@ async fn test_store_round_trip() {
     // Add multiple test entries
     store1.upsert("Hello", None, "Bonjour", None).await.unwrap();
     store1.upsert("World", None, "Monde", None).await.unwrap();
-    store1.upsert("Goodbye", Some("context"), "Au revoir", None).await.unwrap();
+    store1
+        .upsert("Goodbye", Some("context"), "Au revoir", None)
+        .await
+        .unwrap();
 
     // Explicitly drop to force flush
     drop(store1);
@@ -201,14 +216,17 @@ async fn test_store_plural_forms() {
     let store = manager.store_for(None).await.unwrap();
 
     // Add entry with plurals
-    store.upsert_full(
-        "files",
-        None,
-        "1 fichier",
-        Some("files"),
-        Some(vec!["1 fichier".to_string(), "%d fichiers".to_string()]),
-        None,
-    ).await.unwrap();
+    store
+        .upsert_full(
+            "files",
+            None,
+            "1 fichier",
+            Some("files"),
+            Some(vec!["1 fichier".to_string(), "%d fichiers".to_string()]),
+            None,
+        )
+        .await
+        .unwrap();
 
     // Verify plural forms stored correctly
     let entry = store.get("files", None).await.unwrap();
@@ -228,8 +246,14 @@ async fn test_store_context_handling() {
     let store = manager.store_for(None).await.unwrap();
 
     // Add entries with same msgid but different contexts
-    store.upsert("Save", Some("menu"), "Enregistrer", None).await.unwrap();
-    store.upsert("Save", Some("button"), "Sauvegarder", None).await.unwrap();
+    store
+        .upsert("Save", Some("menu"), "Enregistrer", None)
+        .await
+        .unwrap();
+    store
+        .upsert("Save", Some("button"), "Sauvegarder", None)
+        .await
+        .unwrap();
 
     // Verify both are stored separately
     let entry1 = store.get("Save", Some("menu")).await.unwrap();

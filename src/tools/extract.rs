@@ -54,8 +54,7 @@ pub(crate) async fn handle_get_untranslated(
         .iter()
         .filter(|(_, _, entry)| {
             let empty = if entry.msgid_plural.is_some() {
-                entry.msgstr_plural.is_empty()
-                    || entry.msgstr_plural.iter().any(|s| s.is_empty())
+                entry.msgstr_plural.is_empty() || entry.msgstr_plural.iter().any(|s| s.is_empty())
             } else {
                 entry.msgstr.is_empty()
             };
@@ -240,7 +239,10 @@ mod tests {
     #[test]
     fn nplurals_parsing() {
         assert_eq!(parse_nplurals(None), None);
-        assert_eq!(parse_nplurals(Some("nplurals=2; plural=(n != 1);")), Some(2));
+        assert_eq!(
+            parse_nplurals(Some("nplurals=2; plural=(n != 1);")),
+            Some(2)
+        );
         assert_eq!(
             parse_nplurals(Some("nplurals=4; plural=(n==1 ? 0 : n);")),
             Some(4)
@@ -250,7 +252,10 @@ mod tests {
 
     #[test]
     fn plural_categories_known_languages() {
-        assert_eq!(required_plural_categories("fr", Some(2)), vec!["one", "other"]);
+        assert_eq!(
+            required_plural_categories("fr", Some(2)),
+            vec!["one", "other"]
+        );
         assert_eq!(
             required_plural_categories("uk", Some(4)),
             vec!["one", "few", "many", "other"]
@@ -283,7 +288,10 @@ mod tests {
         let manager = make_manager(&path).await;
         let store = manager.store_for(None).await.unwrap();
         store.set_header("Language", "fr").await.unwrap();
-        store.upsert("Translated", None, "Traduit", None).await.unwrap();
+        store
+            .upsert("Translated", None, "Traduit", None)
+            .await
+            .unwrap();
         store.upsert("Empty", None, "", None).await.unwrap();
         store
             .upsert("Fuzzy", None, "Flou", Some(vec!["fuzzy".into()]))
@@ -302,7 +310,10 @@ mod tests {
 
         assert_eq!(result["total"], 2);
         let entries = result["entries"].as_array().unwrap();
-        let msgids: Vec<&str> = entries.iter().map(|e| e["msgid"].as_str().unwrap()).collect();
+        let msgids: Vec<&str> = entries
+            .iter()
+            .map(|e| e["msgid"].as_str().unwrap())
+            .collect();
         assert!(msgids.contains(&"Empty"));
         assert!(msgids.contains(&"Fuzzy"));
         assert!(!msgids.contains(&"Translated"));
@@ -315,7 +326,10 @@ mod tests {
         let manager = make_manager(&path).await;
         let store = manager.store_for(None).await.unwrap();
         for i in 0..5 {
-            store.upsert(&format!("k{i}"), None, "", None).await.unwrap();
+            store
+                .upsert(&format!("k{i}"), None, "", None)
+                .await
+                .unwrap();
         }
 
         let result = handle_get_untranslated(
@@ -438,7 +452,10 @@ mod tests {
 
         assert_eq!(result["total"], 2);
         let entries = result["entries"].as_array().unwrap();
-        let msgids: Vec<&str> = entries.iter().map(|e| e["msgid"].as_str().unwrap()).collect();
+        let msgids: Vec<&str> = entries
+            .iter()
+            .map(|e| e["msgid"].as_str().unwrap())
+            .collect();
         assert!(msgids.contains(&"Removed"));
         assert!(msgids.contains(&"AlsoOld"));
     }

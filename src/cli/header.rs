@@ -196,11 +196,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("messages.po");
         std::fs::write(&path, po_with_header()).unwrap();
-        let code = run(
-            HeaderCommand::List { path: Some(path) },
-            true,
+        let code = run(HeaderCommand::List { path: Some(path) }, true);
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
         );
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
     }
 
     #[test]
@@ -215,7 +215,10 @@ mod tests {
             },
             true,
         );
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
+        );
     }
 
     #[test]
@@ -232,7 +235,10 @@ mod tests {
             },
             true,
         );
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
+        );
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("Last-Translator: test"));
     }
@@ -251,7 +257,10 @@ mod tests {
             },
             true,
         );
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
+        );
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("Last-Translator: ghost"));
     }

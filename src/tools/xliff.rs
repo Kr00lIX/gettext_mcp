@@ -152,10 +152,7 @@ pub(crate) async fn handle_import_xliff(
     for unit in &parsed.units {
         // Locate the matching PO entry. We try `(msgid, msgctxt)` first;
         // if that fails and no msgctxt is set we just key off msgid.
-        let lookup = store
-            .get(&unit.msgid, unit.msgctxt.as_deref())
-            .await
-            .ok();
+        let lookup = store.get(&unit.msgid, unit.msgctxt.as_deref()).await.ok();
 
         let Some(mut entry) = lookup else {
             unmatched.push(unit.msgid.clone());
@@ -853,10 +850,7 @@ mod tests {
 
         let manager = make_manager(&po).await;
         let store = manager.store_for(None).await.unwrap();
-        store
-            .upsert("Open", Some("menu"), "", None)
-            .await
-            .unwrap();
+        store.upsert("Open", Some("menu"), "", None).await.unwrap();
         store
             .upsert("Open", Some("button"), "", None)
             .await
@@ -950,7 +944,10 @@ mod tests {
 
     #[test]
     fn extract_specifiers_basic() {
-        assert_eq!(extract_specifiers("Hello %s, you have %d items"), vec!["%s", "%d"]);
+        assert_eq!(
+            extract_specifiers("Hello %s, you have %d items"),
+            vec!["%s", "%d"]
+        );
         assert_eq!(extract_specifiers("100%% done"), Vec::<String>::new());
         assert_eq!(extract_specifiers("{name} {0}"), vec!["{name}", "{0}"]);
     }

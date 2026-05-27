@@ -96,7 +96,10 @@ mod tests {
             false,
             true,
         );
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
+        );
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("msgctxt \"menu\""));
     }
@@ -107,14 +110,11 @@ mod tests {
         let path = dir.path().join("messages.po");
         let original = "msgid \"\"\nmsgstr \"\"\n\nmsgid \"Open\"\nmsgstr \"Ouvrir\"\n";
         std::fs::write(&path, original).unwrap();
-        let code = run(
-            "Open".into(),
-            "menu".into(),
-            Some(path.clone()),
-            true,
-            true,
+        let code = run("Open".into(), "menu".into(), Some(path.clone()), true, true);
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
         );
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("msgctxt \"menu\""));
     }

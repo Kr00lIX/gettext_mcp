@@ -39,9 +39,7 @@ pub(crate) async fn handle_set_comment(
     params: SetCommentParams,
 ) -> Result<Value, GettextError> {
     let store = manager.store_for(params.path.as_deref()).await?;
-    let mut entry = store
-        .get(&params.msgid, params.msgctxt.as_deref())
-        .await?;
+    let mut entry = store.get(&params.msgid, params.msgctxt.as_deref()).await?;
 
     if let Some(comment) = &params.comment {
         entry.translator_comment = comment.lines().map(|l| l.to_string()).collect();
@@ -65,9 +63,7 @@ pub(crate) async fn handle_set_fuzzy(
     params: SetFuzzyParams,
 ) -> Result<Value, GettextError> {
     let store = manager.store_for(params.path.as_deref()).await?;
-    let mut entry = store
-        .get(&params.msgid, params.msgctxt.as_deref())
-        .await?;
+    let mut entry = store.get(&params.msgid, params.msgctxt.as_deref()).await?;
 
     if params.fuzzy {
         if !entry.flags.contains(&"fuzzy".to_string()) {
@@ -105,9 +101,7 @@ pub(crate) async fn handle_set_flag(
     }
 
     let store = manager.store_for(params.path.as_deref()).await?;
-    let mut entry = store
-        .get(&params.msgid, params.msgctxt.as_deref())
-        .await?;
+    let mut entry = store.get(&params.msgid, params.msgctxt.as_deref()).await?;
 
     if params.enabled {
         if !entry.flags.contains(&params.flag) {

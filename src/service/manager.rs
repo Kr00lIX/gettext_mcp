@@ -32,10 +32,7 @@ impl GettextStoreManager {
     }
 
     /// Construct a manager with a caller-supplied [`FileStore`].
-    pub fn with_file_store(
-        default_path: Option<PathBuf>,
-        file_store: Arc<dyn FileStore>,
-    ) -> Self {
+    pub fn with_file_store(default_path: Option<PathBuf>, file_store: Arc<dyn FileStore>) -> Self {
         Self {
             default_path,
             file_store,
@@ -57,9 +54,8 @@ impl GettextStoreManager {
         let mut stores = self.stores.write().await;
         for file_path in po_files {
             if !stores.contains_key(&file_path) {
-                let store = Arc::new(
-                    GettextStore::new(&file_path, Arc::clone(&self.file_store)).await?,
-                );
+                let store =
+                    Arc::new(GettextStore::new(&file_path, Arc::clone(&self.file_store)).await?);
                 stores.insert(file_path, store);
             }
         }
@@ -183,17 +179,19 @@ impl GettextStoreManager {
             let canonical_base = base.canonicalize().map_err(|e| {
                 GettextError::InvalidPath(format!("Cannot resolve base path: {}", e))
             })?;
-            let canonical_path = path.canonicalize().or_else(|_| {
-                if let (Some(parent), Some(filename)) = (path.parent(), path.file_name()) {
-                    parent.canonicalize().map(|p| p.join(filename))
-                } else {
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "Cannot resolve path",
-                    ))
-                }
-            })
-            .map_err(|e| GettextError::InvalidPath(format!("Cannot resolve path: {}", e)))?;
+            let canonical_path = path
+                .canonicalize()
+                .or_else(|_| {
+                    if let (Some(parent), Some(filename)) = (path.parent(), path.file_name()) {
+                        parent.canonicalize().map(|p| p.join(filename))
+                    } else {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            "Cannot resolve path",
+                        ))
+                    }
+                })
+                .map_err(|e| GettextError::InvalidPath(format!("Cannot resolve path: {}", e)))?;
 
             if !canonical_path.starts_with(&canonical_base) {
                 return Err(GettextError::InvalidPath(
@@ -335,5 +333,4 @@ mod tests {
             "Salutation"
         );
     }
-
 }

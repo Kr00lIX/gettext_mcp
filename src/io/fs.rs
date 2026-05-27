@@ -211,7 +211,9 @@ mod tests {
         let path = dir.path().join("hello.po");
         let store = FsFileStore::new();
 
-        store.write(&path, "msgid \"Hi\"\nmsgstr \"Hej\"\n").unwrap();
+        store
+            .write(&path, "msgid \"Hi\"\nmsgstr \"Hej\"\n")
+            .unwrap();
         let content = store.read(&path).unwrap();
         assert!(content.contains("Hej"));
     }

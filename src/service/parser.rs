@@ -144,8 +144,7 @@ pub fn parse_po(content: &str) -> Result<GettextFile, GettextError> {
                 file.obsolete_lines.push(line.to_string());
             }
             LineType::Msgctxt => {
-                if in_entry
-                    && (!current_entry.msgid.is_empty() || !current_entry.msgstr.is_empty())
+                if in_entry && (!current_entry.msgid.is_empty() || !current_entry.msgstr.is_empty())
                 {
                     let key = (current_entry.msgid.clone(), current_entry.msgctxt.clone());
                     file.entries.insert(key, current_entry.clone());
@@ -156,8 +155,7 @@ pub fn parse_po(content: &str) -> Result<GettextFile, GettextError> {
                 current_entry.msgctxt = Some(parse_string_literal(line));
             }
             LineType::Msgid => {
-                if in_entry
-                    && (!current_entry.msgid.is_empty() || !current_entry.msgstr.is_empty())
+                if in_entry && (!current_entry.msgid.is_empty() || !current_entry.msgstr.is_empty())
                 {
                     let key = (current_entry.msgid.clone(), current_entry.msgctxt.clone());
                     file.entries.insert(key, current_entry.clone());
@@ -470,7 +468,10 @@ msgstr "Bonjour"
         let entry = file.entries.get(&("Hello".to_string(), None)).unwrap();
         assert_eq!(entry.extracted_comment.len(), 2);
         assert_eq!(entry.extracted_comment[0], "This is an extracted comment");
-        assert_eq!(entry.extracted_comment[1], "Second line of extracted comment");
+        assert_eq!(
+            entry.extracted_comment[1],
+            "Second line of extracted comment"
+        );
     }
 
     #[test]

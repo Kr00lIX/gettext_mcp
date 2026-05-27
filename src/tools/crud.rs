@@ -106,9 +106,7 @@ pub(crate) async fn handle_get_translation(
     params: GetTranslationParams,
 ) -> Result<Value, GettextError> {
     let store = manager.store_for(params.path.as_deref()).await?;
-    let entry = store
-        .get(&params.msgid, params.msgctxt.as_deref())
-        .await?;
+    let entry = store.get(&params.msgid, params.msgctxt.as_deref()).await?;
 
     Ok(json!({
         "msgid": params.msgid,

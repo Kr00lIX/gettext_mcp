@@ -157,15 +157,21 @@ impl GettextMcpServer {
         let preamble = path_preamble(params.path.as_ref());
 
         let focus_instructions = match focus {
-            "all" => "    - Iterate over every translated entry via repeated\n\
-                     \x20     `list_translations(limit=50)` calls.\n",
-            "untranslated" => "    - Use `get_untranslated` to enumerate the\n\
+            "all" => {
+                "    - Iterate over every translated entry via repeated\n\
+                     \x20     `list_translations(limit=50)` calls.\n"
+            }
+            "untranslated" => {
+                "    - Use `get_untranslated` to enumerate the\n\
                               \x20     remaining work and triage which strings\n\
                               \x20     are highest-priority (UI surfaces vs.\n\
-                              \x20     debug copy).\n",
-            _ => "    - Use `list_translations(query=\"fuzzy\")` or scan the\n\
+                              \x20     debug copy).\n"
+            }
+            _ => {
+                "    - Use `list_translations(query=\"fuzzy\")` or scan the\n\
                  \x20     output of `validate_translations` for entries flagged\n\
-                 \x20     fuzzy and re-check each one against its source.\n",
+                 \x20     fuzzy and re-check each one against its source.\n"
+            }
         };
 
         let content = format!(
@@ -582,7 +588,8 @@ mod tests {
         assert!(text.contains("get_stale"));
         assert!(text.contains("Do NOT call"));
         // The dry-run report section should not instruct the model to call delete_key.
-        assert!(!text.contains("call\n\x20 - For each entry confirmed in Step 3, call\n\x20   `delete_key"));
+        assert!(!text
+            .contains("call\n\x20 - For each entry confirmed in Step 3, call\n\x20   `delete_key"));
     }
 
     #[test]

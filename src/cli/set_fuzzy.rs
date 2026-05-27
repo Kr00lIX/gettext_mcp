@@ -34,10 +34,7 @@ pub fn run(
         // Just verify the entry exists.
         let exists = rt.block_on(async {
             let store = manager.store_for(None).await?;
-            store
-                .get(&msgid, msgctxt.as_deref())
-                .await
-                .map(|_| ())
+            store.get(&msgid, msgctxt.as_deref()).await.map(|_| ())
         });
         if let Err(e) = exists {
             return handle_error(e);
@@ -52,9 +49,7 @@ pub fn run(
             });
             return print_json(&value);
         }
-        println!(
-            "[dry-run] would set fuzzy={new_value} on msgid={msgid:?} msgctxt={msgctxt:?}"
-        );
+        println!("[dry-run] would set fuzzy={new_value} on msgid={msgid:?} msgctxt={msgctxt:?}");
         return ExitCode::from(EXIT_OK);
     }
 
@@ -105,15 +100,11 @@ mod tests {
             "msgid \"\"\nmsgstr \"\"\n\nmsgid \"Hello\"\nmsgstr \"Bonjour\"\n",
         )
         .unwrap();
-        let code = run(
-            "Hello".into(),
-            None,
-            false,
-            Some(path.clone()),
-            false,
-            true,
+        let code = run("Hello".into(), None, false, Some(path.clone()), false, true);
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
         );
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("#, fuzzy"));
     }
@@ -127,15 +118,11 @@ mod tests {
             "msgid \"\"\nmsgstr \"\"\n\n#, fuzzy\nmsgid \"Hello\"\nmsgstr \"Bonjour\"\n",
         )
         .unwrap();
-        let code = run(
-            "Hello".into(),
-            None,
-            true,
-            Some(path.clone()),
-            false,
-            true,
+        let code = run("Hello".into(), None, true, Some(path.clone()), false, true);
+        assert_eq!(
+            format!("{code:?}"),
+            format!("{:?}", ExitCode::from(EXIT_OK))
         );
-        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::from(EXIT_OK)));
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("#, fuzzy"));
     }

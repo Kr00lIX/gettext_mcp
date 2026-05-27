@@ -25,12 +25,14 @@ pub fn resolve_file(path: Option<PathBuf>) -> Result<PathBuf, GettextError> {
         return Ok(p);
     }
 
-    let cwd = std::env::current_dir()
-        .map_err(|e| GettextError::InvalidInput(format!("cannot determine current directory: {e}")))?;
+    let cwd = std::env::current_dir().map_err(|e| {
+        GettextError::InvalidInput(format!("cannot determine current directory: {e}"))
+    })?;
 
     let mut matches: Vec<PathBuf> = Vec::new();
-    let read = std::fs::read_dir(&cwd)
-        .map_err(|e| GettextError::InvalidInput(format!("cannot read directory {}: {e}", cwd.display())))?;
+    let read = std::fs::read_dir(&cwd).map_err(|e| {
+        GettextError::InvalidInput(format!("cannot read directory {}: {e}", cwd.display()))
+    })?;
     for entry in read.flatten() {
         let p = entry.path();
         if !p.is_file() {
@@ -71,9 +73,7 @@ pub fn build_manager(
     let resolved = resolve_file(path)?;
     // Canonicalize when the file exists so the manager sees an absolute
     // path (matches xcstrings-mcp behavior and keeps log messages stable).
-    let absolute = resolved
-        .canonicalize()
-        .unwrap_or_else(|_| resolved.clone());
+    let absolute = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
     let manager = Arc::new(GettextStoreManager::new(Some(absolute.clone())));
     Ok((absolute, manager))
 }

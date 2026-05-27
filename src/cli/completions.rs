@@ -20,7 +20,13 @@ mod tests {
 
     #[test]
     fn completions_emit_for_each_shell() {
-        for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::PowerShell, Shell::Elvish] {
+        for shell in [
+            Shell::Bash,
+            Shell::Zsh,
+            Shell::Fish,
+            Shell::PowerShell,
+            Shell::Elvish,
+        ] {
             let mut cmd = crate::Cli::command();
             let mut buf: Vec<u8> = Vec::new();
             generate(shell, &mut cmd, "gettext-mcp", &mut buf);
