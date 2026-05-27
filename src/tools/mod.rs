@@ -12,6 +12,8 @@ pub(crate) mod extract;
 pub(crate) mod glossary;
 pub(crate) mod header;
 pub(crate) mod metadata;
+pub(crate) mod mo;
 pub(crate) mod search;
+pub(crate) mod sync;
 pub(crate) mod validate;
 pub(crate) mod xliff;

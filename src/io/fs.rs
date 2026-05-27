@@ -66,7 +66,11 @@ impl FileStore for FsFileStore {
     }
 
     fn write(&self, path: &Path, content: &str) -> Result<(), GettextError> {
-        atomic_write(path, content)
+        atomic_write(path, content.as_bytes())
+    }
+
+    fn write_bytes(&self, path: &Path, bytes: &[u8]) -> Result<(), GettextError> {
+        atomic_write(path, bytes)
     }
 
     fn modified_time(&self, path: &Path) -> Result<SystemTime, GettextError> {
@@ -83,7 +87,7 @@ impl FileStore for FsFileStore {
 /// sequence. On Unix, acquires a best-effort `flock(LOCK_EX | LOCK_NB)` on
 /// the existing target for the duration of the write. If the lock is held by
 /// another process, returns [`GettextError::FileLocked`].
-fn atomic_write(target: &Path, content: &str) -> Result<(), GettextError> {
+fn atomic_write(target: &Path, content: &[u8]) -> Result<(), GettextError> {
     let dir = target.parent().ok_or_else(|| {
         GettextError::InvalidPath(format!(
             "no parent directory for target path: {}",
@@ -112,7 +116,7 @@ fn atomic_write(target: &Path, content: &str) -> Result<(), GettextError> {
 
     let result = (|| -> Result<(), GettextError> {
         let mut file = fs::File::create(&tmp_path)?;
-        file.write_all(content.as_bytes())?;
+        file.write_all(content)?;
         file.sync_all()?;
         // `rename` is atomic on POSIX when source and target are on the same
         // filesystem — we always write the temp file in the same directory.
@@ -291,6 +295,18 @@ mod tests {
         let mtime = store.modified_time(&path).unwrap();
         let elapsed = SystemTime::now().duration_since(mtime).unwrap();
         assert!(elapsed.as_secs() < 5);
+    }
+
+    #[test]
+    fn write_bytes_preserves_binary_content() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("data.bin");
+        let store = FsFileStore::new();
+
+        let bytes: Vec<u8> = vec![0xde, 0x12, 0x04, 0x95, 0x00, 0xff, 0x01];
+        store.write_bytes(&path, &bytes).unwrap();
+        let read_back = std::fs::read(&path).unwrap();
+        assert_eq!(read_back, bytes);
     }
 
     #[test]

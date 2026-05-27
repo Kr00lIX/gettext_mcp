@@ -6,6 +6,8 @@
 
 pub mod glossary;
 pub mod manager;
+pub mod merger;
+pub mod mo_writer;
 pub mod parser;
 pub mod serializer;
 pub mod store;

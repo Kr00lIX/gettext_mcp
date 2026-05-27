@@ -43,7 +43,9 @@ use crate::tools::{
         handle_set_comment, handle_set_flag, handle_set_fuzzy, SetCommentParams, SetFlagParams,
         SetFuzzyParams,
     },
+    mo::{handle_compile_mo, CompileMoParams},
     search::{handle_search_keys, SearchKeysParams},
+    sync::{handle_sync_with_pot, SyncWithPotParams},
     validate::{handle_validate_translations, ValidateTranslationsParams},
     xliff::{handle_export_xliff, handle_import_xliff, ExportXliffParams, ImportXliffParams},
 };
@@ -476,6 +478,42 @@ impl GettextMcpServer {
             }
         }
     }
+
+    #[tool(
+        name = "sync_with_pot",
+        description = "Merge a POT template into a PO file (in-house `msgmerge`). New POT entries become untranslated rows in the PO; entries dropped from the POT move to the obsolete (`#~`) block while keeping their translation for revival. Source-side metadata (msgid_plural, source locations, extracted comments) is taken from the POT; translator-side fields (msgstr, translator comments, flags) come from the PO. Entries whose `msgid_plural` changed are marked `fuzzy` by default — pass `mark_changed_as_fuzzy=false` to disable. `POT-Creation-Date` is synced from POT when present. Set `dry_run=true` to see the report without writing."
+    )]
+    async fn sync_with_pot(
+        &self,
+        Parameters(params): Parameters<SyncWithPotParams>,
+    ) -> Result<String, String> {
+        match handle_sync_with_pot(&self.manager, params).await {
+            Ok(value) => serde_json::to_string_pretty(&value)
+                .map_err(|e| format!("serialization error: {e}")),
+            Err(e) => {
+                error!(error = %e, "sync_with_pot failed");
+                Err(e.to_string())
+            }
+        }
+    }
+
+    #[tool(
+        name = "compile_mo",
+        description = "Compile a PO file to a binary `.mo` file (in-house `msgfmt`). Skips fuzzy and untranslated entries (the gettext runtime does the same). Plural entries store both forms NUL-separated per the GNU MO format. The PO header is always included so the runtime can read Language/Plural-Forms. The `output` path must use the `.mo` (or `.gmo`) extension and is written atomically through the same FileStore the PO tools use. No hash table is emitted (S=0) — readers fall back to binary search over the sorted strings table, which is permitted by the spec."
+    )]
+    async fn compile_mo(
+        &self,
+        Parameters(params): Parameters<CompileMoParams>,
+    ) -> Result<String, String> {
+        match handle_compile_mo(&self.manager, params).await {
+            Ok(value) => serde_json::to_string_pretty(&value)
+                .map_err(|e| format!("serialization error: {e}")),
+            Err(e) => {
+                error!(error = %e, "compile_mo failed");
+                Err(e.to_string())
+            }
+        }
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -497,8 +535,10 @@ impl ServerHandler for GettextMcpServer {
              (paginated review queues), `validate_translations` (format/plural/empty checks), \
              `search_keys` (paginated search), `discover_files` (scan a directory for \
              .po/.pot files), `export_xliff`/`import_xliff` (XLIFF 1.2 interchange — \
-             plurals and obsolete entries are skipped), and `get_glossary`/`update_glossary` \
-             (shared term bank at $GETTEXT_GLOSSARY_PATH, default ./glossary.json).",
+             plurals and obsolete entries are skipped), `get_glossary`/`update_glossary` \
+             (shared term bank at $GETTEXT_GLOSSARY_PATH, default ./glossary.json), and \
+             `sync_with_pot`/`compile_mo` (in-house `msgmerge`/`msgfmt`: merge a POT \
+             template into a PO, or compile a PO into a binary `.mo`).",
         )
     }
 }

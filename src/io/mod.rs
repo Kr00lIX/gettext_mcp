@@ -26,6 +26,18 @@ pub trait FileStore: Send + Sync {
     /// an advisory lock on the target during the write where possible.
     fn write(&self, path: &Path, content: &str) -> Result<(), GettextError>;
 
+    /// Atomically write a raw byte buffer to `path`. Used for binary
+    /// artifacts like `.mo` files. Default impl just routes through
+    /// [`FileStore::write`] by treating the bytes as UTF-8 — implementors
+    /// that need to honour arbitrary bytes (the production
+    /// [`FsFileStore`]) should override.
+    fn write_bytes(&self, path: &Path, bytes: &[u8]) -> Result<(), GettextError> {
+        let s = std::str::from_utf8(bytes).map_err(|e| {
+            GettextError::InvalidInput(format!("write_bytes default impl expects UTF-8: {e}"))
+        })?;
+        self.write(path, s)
+    }
+
     /// Return the on-disk modified time of `path`, used by the store
     /// manager to detect external edits and invalidate caches.
     fn modified_time(&self, path: &Path) -> Result<SystemTime, GettextError>;
