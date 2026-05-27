@@ -2,9 +2,23 @@
 name = "gettext-mcp"
 version = "0.1.0"
 edition = "2021"
-description = "MCP (Model Context Protocol) server for GNU gettext .po/.pot files"
-repository = "https://github.com/example/gettext-mcp"
-authors = ["Your Name <your.email@example.com>"]
+rust-version = "1.75"
+authors = ["Anatolii Kovalchuk <me@kr00lix.com>"]
+description = "Model Context Protocol (MCP) server for managing GNU gettext .po/.pot translation files, with CRUD tools and an optional web UI."
+readme = "README.md"
+repository = "https://github.com/Kr00lIX/gettext_mcp"
+homepage = "https://github.com/Kr00lIX/gettext_mcp"
+documentation = "https://docs.rs/gettext-mcp"
+license = "MIT OR Apache-2.0"
+keywords = ["mcp", "gettext", "i18n", "l10n", "translation"]
+categories = ["command-line-utilities", "internationalization", "development-tools", "parser-implementations"]
+include = [
+    "src/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
 
 [[bin]]
 name = "gettext-mcp"
