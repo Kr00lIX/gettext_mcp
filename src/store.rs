@@ -1,6 +1,7 @@
 use indexmap::IndexMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::SystemTime;
 use thiserror::Error;
 use tokio::sync::RwLock;
 
@@ -673,6 +674,20 @@ fn acquire_flock(_target: &std::path::Path) -> Result<Option<FlockGuard>, StoreE
 pub struct GettextStore {
     path: PathBuf,
     data: Arc<RwLock<GettextFile>>,
+    /// The on-disk mtime captured the last time this store read or wrote the
+    /// file. Used by [`GettextStoreManager`] to detect external modifications
+    /// (e.g. Poedit, msgmerge, manual edits) so the cache can be invalidated
+    /// instead of serving stale content. `None` means we never observed a
+    /// modified time (file did not exist at load) — in that case the cache
+    /// will reload on the next access if the file has since appeared.
+    loaded_mtime: Arc<RwLock<Option<SystemTime>>>,
+}
+
+/// Best-effort `fs::metadata(path).modified()`. Returns `None` when the file
+/// is missing or the platform does not report a mtime — callers treat that as
+/// "no observable change", which keeps the cache valid rather than panicking.
+fn file_mtime(path: &std::path::Path) -> Option<SystemTime> {
+    std::fs::metadata(path).ok().and_then(|m| m.modified().ok())
 }
 
 impl GettextStore {
@@ -681,18 +696,29 @@ impl GettextStore {
         let path = path.into();
 
         // Try to load existing file, or create new empty one
-        let data = if path.exists() {
+        let (data, loaded_mtime) = if path.exists() {
             let content = tokio::fs::read_to_string(&path).await?;
             // Strip leading UTF-8 BOM if present so the parser doesn't trip on it.
-            parser::parse_po(strip_bom(&content))?
+            let parsed = parser::parse_po(strip_bom(&content))?;
+            // Capture mtime AFTER reading so a concurrent writer that lands
+            // between read and stat is detected on the next access (the
+            // recorded mtime will be older than what's on disk).
+            (parsed, file_mtime(&path))
         } else {
-            GettextFile::new()
+            (GettextFile::new(), None)
         };
 
         Ok(Self {
             path,
             data: Arc::new(RwLock::new(data)),
+            loaded_mtime: Arc::new(RwLock::new(loaded_mtime)),
         })
+    }
+
+    /// Return the mtime this store observed the last time it read or wrote
+    /// its backing file, if known.
+    pub async fn loaded_mtime(&self) -> Option<SystemTime> {
+        *self.loaded_mtime.read().await
     }
 
     /// Get a translation entry
@@ -828,6 +854,14 @@ impl GettextStore {
         tokio::task::spawn_blocking(move || atomic_write(&path, &content))
             .await
             .map_err(|e| StoreError::IoError(std::io::Error::other(e)))??;
+        // Refresh our recorded mtime to what we just wrote. This prevents the
+        // `GettextStoreManager` staleness check from re-reading the file we
+        // ourselves just authored. If the platform somehow refuses to stat
+        // the file we just wrote, fall back to `now()` so the cache still
+        // sees a fresh-looking timestamp rather than `None` (which would be
+        // treated as "no recorded mtime" and risk a spurious reload).
+        let new_mtime = file_mtime(&self.path).unwrap_or_else(SystemTime::now);
+        *self.loaded_mtime.write().await = Some(new_mtime);
         Ok(())
     }
 
@@ -1067,15 +1101,47 @@ impl GettextStoreManager {
         {
             let stores = self.stores.read().await;
             if let Some(store) = stores.get(&path_buf) {
-                return Ok(Arc::clone(store));
+                // Check whether the file has been modified out from under us
+                // (e.g. Poedit, msgmerge, manual edit). If the on-disk mtime
+                // differs from what the cached store recorded, drop the read
+                // lock and fall through to the slow path to reload. If the
+                // file is gone or stat fails, keep serving the cached copy
+                // — the next persist will surface any real error.
+                let current_mtime = file_mtime(&path_buf);
+                let cached_mtime = store.loaded_mtime().await;
+                let stale = match (current_mtime, cached_mtime) {
+                    (Some(current), Some(cached)) => current != cached,
+                    // First-time observation of an mtime (cached has None but
+                    // the file now exists): treat as stale so we reload from
+                    // disk and capture the mtime.
+                    (Some(_), None) => true,
+                    // File missing or stat failed: keep the cached copy.
+                    (None, _) => false,
+                };
+                if !stale {
+                    return Ok(Arc::clone(store));
+                }
             }
         }
 
-        // Slow path: write lock for cache misses
+        // Slow path: write lock for cache misses OR stale invalidation.
         let mut stores = self.stores.write().await;
-        // Double-check after acquiring write lock
+        // Re-check staleness after acquiring write lock — another task may
+        // have already reloaded between our read-lock drop and write-lock
+        // acquire, in which case we should reuse their fresh entry.
         if let Some(store) = stores.get(&path_buf) {
-            return Ok(Arc::clone(store));
+            let current_mtime = file_mtime(&path_buf);
+            let cached_mtime = store.loaded_mtime().await;
+            let stale = match (current_mtime, cached_mtime) {
+                (Some(current), Some(cached)) => current != cached,
+                (Some(_), None) => true,
+                (None, _) => false,
+            };
+            if !stale {
+                return Ok(Arc::clone(store));
+            }
+            // Stale: drop the entry so we can replace it with a fresh load.
+            stores.shift_remove(&path_buf);
         }
 
         let store = Arc::new(GettextStore::new(&path_buf).await?);
@@ -2155,5 +2221,110 @@ msgstr "Actif"
 
         assert!(!orphan.exists(), "orphan temp file should be removed");
         assert!(keep.exists(), "unrelated .po file must be preserved");
+    }
+
+    // ==================== mtime-aware cache ====================
+
+    /// Simulate an external editor (Poedit, msgmerge, manual edit) replacing
+    /// the file on disk: the manager must observe the new mtime and reload
+    /// rather than serving the previously-cached parse.
+    #[tokio::test]
+    async fn test_cache_invalidates_on_external_modification() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("messages.po");
+
+        // Seed the file with an initial entry and prime the cache.
+        std::fs::write(
+            &path,
+            "msgid \"\"\nmsgstr \"\"\n\nmsgid \"Hello\"\nmsgstr \"Bonjour\"\n",
+        )
+        .unwrap();
+
+        let manager = GettextStoreManager::new(Some(path.clone()));
+        let store1 = manager.store_for(None).await.unwrap();
+        assert_eq!(store1.get("Hello", None).await.unwrap().msgstr, "Bonjour");
+
+        // Filesystem mtime resolution on some platforms (HFS+, ext3, FAT) is
+        // ~1s, so a sub-millisecond rewrite can land on the same mtime as the
+        // initial seed and defeat the staleness check. Sleep just long enough
+        // to guarantee a distinct mtime, then rewrite the file.
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        std::fs::write(
+            &path,
+            "msgid \"\"\nmsgstr \"\"\n\nmsgid \"Hello\"\nmsgstr \"Salut\"\n",
+        )
+        .unwrap();
+
+        // store_for must observe the new mtime, evict the stale entry, and
+        // return a fresh store reflecting the external edit.
+        let store2 = manager.store_for(None).await.unwrap();
+        assert_eq!(store2.get("Hello", None).await.unwrap().msgstr, "Salut");
+
+        // The two stores should be distinct Arc instances — the cache was
+        // genuinely replaced, not patched in place.
+        assert!(
+            !Arc::ptr_eq(&store1, &store2),
+            "stale store should have been evicted, not reused"
+        );
+    }
+
+    /// When the file on disk has not changed between calls, the manager must
+    /// hand back the exact same `Arc<GettextStore>` — no reload, no re-parse,
+    /// no fresh Arc allocation.
+    #[tokio::test]
+    async fn test_cache_serves_unchanged_file_without_rereading() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("messages.po");
+        std::fs::write(
+            &path,
+            "msgid \"\"\nmsgstr \"\"\n\nmsgid \"Hello\"\nmsgstr \"Bonjour\"\n",
+        )
+        .unwrap();
+
+        let manager = GettextStoreManager::new(Some(path.clone()));
+        let store1 = manager.store_for(None).await.unwrap();
+        let store2 = manager.store_for(None).await.unwrap();
+
+        // Same Arc instance — proves the second call short-circuited on the
+        // mtime check and never re-parsed the file.
+        assert!(
+            Arc::ptr_eq(&store1, &store2),
+            "expected identical Arc on cache hit with unchanged file"
+        );
+    }
+
+    /// A write through the store must update the cached mtime so the next
+    /// `store_for` does not unnecessarily evict-and-reload the entry we just
+    /// authored ourselves.
+    #[tokio::test]
+    async fn test_cache_survives_internal_write() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("messages.po");
+        std::fs::write(
+            &path,
+            "msgid \"\"\nmsgstr \"\"\n\nmsgid \"Hello\"\nmsgstr \"Bonjour\"\n",
+        )
+        .unwrap();
+
+        let manager = GettextStoreManager::new(Some(path.clone()));
+        let store1 = manager.store_for(None).await.unwrap();
+
+        // Writing through the cached store bumps the on-disk mtime. The
+        // store's recorded loaded_mtime must follow, otherwise the next
+        // store_for would mistake our own write for an external edit.
+        store1
+            .upsert("Greeting", None, "Salutation", None)
+            .await
+            .unwrap();
+
+        let store2 = manager.store_for(None).await.unwrap();
+        assert!(
+            Arc::ptr_eq(&store1, &store2),
+            "internal write must not invalidate the cache entry"
+        );
+        assert_eq!(
+            store2.get("Greeting", None).await.unwrap().msgstr,
+            "Salutation"
+        );
     }
 }
