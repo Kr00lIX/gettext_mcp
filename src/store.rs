@@ -518,6 +518,155 @@ pub enum StoreError {
     InvalidPath(String),
     #[error("Invalid input: {0}")]
     InvalidInput(String),
+    #[error("File is locked by another process: {path}")]
+    FileLocked { path: PathBuf },
+}
+
+/// Prefix used for temporary files created during atomic writes.
+const TMP_FILE_PREFIX: &str = ".gettext-mcp-";
+/// Suffix used for temporary files created during atomic writes.
+const TMP_FILE_SUFFIX: &str = ".tmp";
+
+/// Strip a leading UTF-8 BOM (`\u{feff}`) if present.
+fn strip_bom(content: &str) -> &str {
+    content.strip_prefix('\u{feff}').unwrap_or(content)
+}
+
+/// Best-effort cleanup of orphan `.gettext-mcp-*.tmp` files left over from
+/// crashed writes. Scans the given directory non-recursively.
+pub fn cleanup_orphan_tmps(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with(TMP_FILE_PREFIX) && name_str.ends_with(TMP_FILE_SUFFIX) {
+            let path = entry.path();
+            match std::fs::remove_file(&path) {
+                Ok(()) => tracing::info!("cleaned up orphan temp file: {}", path.display()),
+                Err(e) => tracing::warn!(
+                    "failed to remove orphan temp file {}: {}",
+                    path.display(),
+                    e
+                ),
+            }
+        }
+    }
+}
+
+/// Atomically write `content` to `target` using a temp-file + fsync + rename
+/// sequence. On Unix, acquires a best-effort `flock(LOCK_EX | LOCK_NB)` on
+/// the existing target for the duration of the write. If the lock is held by
+/// another process, returns [`StoreError::FileLocked`].
+fn atomic_write(target: &std::path::Path, content: &str) -> Result<(), StoreError> {
+    use std::io::Write;
+
+    let dir = target.parent().ok_or_else(|| {
+        StoreError::InvalidPath(format!(
+            "no parent directory for target path: {}",
+            target.display()
+        ))
+    })?;
+
+    // Acquire advisory lock on existing target file (best-effort).
+    let _lock_guard = acquire_flock(target)?;
+
+    // Process-wide monotonic counter so concurrent writers in the same
+    // process can't collide on the millisecond resolution of SystemTime.
+    static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp_name = format!(
+        "{}{}-{}-{}{}",
+        TMP_FILE_PREFIX,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0),
+        seq,
+        TMP_FILE_SUFFIX,
+    );
+    let tmp_path = dir.join(&tmp_name);
+
+    let result = (|| -> Result<(), StoreError> {
+        let mut file = std::fs::File::create(&tmp_path)?;
+        file.write_all(content.as_bytes())?;
+        file.sync_all()?;
+        // `rename` is atomic on POSIX when source and target are on the same
+        // filesystem (we always write the temp file in the same directory).
+        std::fs::rename(&tmp_path, target)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        // Best-effort cleanup of the temp file when the write/rename fails.
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+
+    result
+}
+
+/// RAII guard for an `flock`-acquired file descriptor on Unix. The lock is
+/// released automatically when the guard is dropped (because the kernel
+/// releases the lock when the underlying fd is closed).
+#[cfg(unix)]
+struct FlockGuard {
+    _file: std::fs::File,
+}
+
+#[cfg(unix)]
+fn acquire_flock(target: &std::path::Path) -> Result<Option<FlockGuard>, StoreError> {
+    use std::os::unix::io::AsRawFd;
+
+    if !target.exists() {
+        // Nothing to lock yet — skip best-effort lock.
+        return Ok(None);
+    }
+
+    let file = match std::fs::File::open(target) {
+        Ok(f) => f,
+        Err(e) => {
+            // If we can't even open it (race with deletion etc.), skip the
+            // lock rather than fail the write.
+            tracing::warn!(
+                "could not open {} for advisory lock: {} — proceeding without lock",
+                target.display(),
+                e
+            );
+            return Ok(None);
+        }
+    };
+
+    let fd = file.as_raw_fd();
+    // SAFETY: `flock` is a POSIX syscall; `fd` is valid because `file` is alive.
+    let ret = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+    if ret != 0 {
+        let errno = std::io::Error::last_os_error();
+        if errno.kind() == std::io::ErrorKind::WouldBlock {
+            return Err(StoreError::FileLocked {
+                path: target.to_path_buf(),
+            });
+        }
+        // Lock not supported on this fs (e.g. NFS without lockd) — proceed.
+        tracing::warn!(
+            "advisory flock unavailable for {}: {} — proceeding without lock",
+            target.display(),
+            errno
+        );
+        return Ok(None);
+    }
+
+    Ok(Some(FlockGuard { _file: file }))
+}
+
+#[cfg(not(unix))]
+struct FlockGuard;
+
+#[cfg(not(unix))]
+fn acquire_flock(_target: &std::path::Path) -> Result<Option<FlockGuard>, StoreError> {
+    // No advisory locking outside Unix — caller proceeds without a lock.
+    Ok(None)
 }
 
 /// Store for a single PO file
@@ -534,7 +683,8 @@ impl GettextStore {
         // Try to load existing file, or create new empty one
         let data = if path.exists() {
             let content = tokio::fs::read_to_string(&path).await?;
-            parser::parse_po(&content)?
+            // Strip leading UTF-8 BOM if present so the parser doesn't trip on it.
+            parser::parse_po(strip_bom(&content))?
         } else {
             GettextFile::new()
         };
@@ -663,10 +813,21 @@ impl GettextStore {
         Ok(count)
     }
 
-    /// Persist changes to disk
+    /// Persist changes to disk.
+    ///
+    /// Writes are atomic: the serialized content is first written to a
+    /// sibling temp file (`.gettext-mcp-<pid>-<unix_millis>.tmp`), fsynced,
+    /// and then renamed over the target. On Unix, the existing target is
+    /// flocked for the duration of the write to prevent concurrent writers
+    /// in the same process tree.
     async fn persist(&self, data: &GettextFile) -> Result<(), StoreError> {
         let content = parser::serialize_po(data);
-        tokio::fs::write(&self.path, content).await?;
+        let path = self.path.clone();
+        // Run the blocking file I/O on a dedicated thread so we don't stall
+        // the async runtime.
+        tokio::task::spawn_blocking(move || atomic_write(&path, &content))
+            .await
+            .map_err(|e| StoreError::IoError(std::io::Error::other(e)))??;
         Ok(())
     }
 
@@ -1888,5 +2049,111 @@ msgstr "Actif"
         let entries = store.list_all().await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, "Hello");
+    }
+
+    // ==================== Atomic Write / Locking / BOM ====================
+
+    #[tokio::test]
+    async fn test_atomic_write_no_orphans() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("clean.po");
+
+        let store = GettextStore::new(&path).await.unwrap();
+        store.upsert("Hello", None, "Bonjour", None).await.unwrap();
+        // Trigger a second write (overwrite path) to exercise rename-over-existing.
+        store.upsert("World", None, "Monde", None).await.unwrap();
+
+        // No `.gettext-mcp-*.tmp` files (or any other `.tmp` siblings) should remain.
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(TMP_FILE_SUFFIX))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "expected no orphan temp files, found: {:?}",
+            leftovers.iter().map(|e| e.path()).collect::<Vec<_>>()
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_flock_blocks_concurrent_write() {
+        use std::os::unix::io::AsRawFd;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("locked.po");
+
+        // Create the file with an initial write so the lock target exists.
+        let store = GettextStore::new(&path).await.unwrap();
+        store.upsert("Hello", None, "Bonjour", None).await.unwrap();
+
+        // Hold an exclusive non-blocking flock on the file.
+        let lock_file = std::fs::File::open(&path).unwrap();
+        let fd = lock_file.as_raw_fd();
+        // SAFETY: `fd` is valid for the lifetime of `lock_file`.
+        let ret = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+        assert_eq!(ret, 0, "should have acquired lock");
+
+        // Attempt to persist while the file is locked — expect FileLocked.
+        let err = store
+            .upsert("Hello", None, "Salut", None)
+            .await
+            .expect_err("write should fail while file is flocked");
+        assert!(
+            matches!(err, StoreError::FileLocked { .. }),
+            "expected FileLocked, got: {err:?}"
+        );
+
+        // Release the lock and retry — should succeed.
+        // SAFETY: `fd` is valid for the lifetime of `lock_file`.
+        unsafe {
+            libc::flock(fd, libc::LOCK_UN);
+        }
+        drop(lock_file);
+
+        store.upsert("Hello", None, "Salut", None).await.unwrap();
+        let entry = store.get("Hello", None).await.unwrap();
+        assert_eq!(entry.msgstr, "Salut");
+    }
+
+    #[tokio::test]
+    async fn test_bom_stripping() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("bom.po");
+
+        // Write a PO file that begins with a UTF-8 BOM.
+        let body = "msgid \"\"\nmsgstr \"\"\n\"Language: en\\n\"\n\nmsgid \"Hello\"\nmsgstr \"Bonjour\"\n";
+        let with_bom = format!("\u{feff}{body}");
+        std::fs::write(&path, with_bom.as_bytes()).unwrap();
+
+        // Loading should strip the BOM and parse successfully.
+        let store = GettextStore::new(&path).await.unwrap();
+        let entry = store.get("Hello", None).await.unwrap();
+        assert_eq!(entry.msgstr, "Bonjour");
+
+        // The store's in-memory msgid must not contain the BOM.
+        assert!(!entry.msgid.contains('\u{feff}'));
+        assert_eq!(entry.msgid, "Hello");
+
+        // Quick direct check on the helper for completeness.
+        assert_eq!(strip_bom("\u{feff}hi"), "hi");
+        assert_eq!(strip_bom("hi"), "hi");
+    }
+
+    #[test]
+    fn test_cleanup_orphan_tmps_removes_only_matching_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let orphan = dir
+            .path()
+            .join(format!("{TMP_FILE_PREFIX}123-456{TMP_FILE_SUFFIX}"));
+        let keep = dir.path().join("messages.po");
+        std::fs::write(&orphan, b"junk").unwrap();
+        std::fs::write(&keep, b"msgid \"\"\nmsgstr \"\"\n").unwrap();
+
+        cleanup_orphan_tmps(dir.path());
+
+        assert!(!orphan.exists(), "orphan temp file should be removed");
+        assert!(keep.exists(), "unrelated .po file must be preserved");
     }
 }

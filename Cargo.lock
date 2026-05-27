@@ -353,6 +353,7 @@ dependencies = [
  "async-trait",
  "axum",
  "indexmap",
+ "libc",
  "rmcp",
  "schemars",
  "serde",

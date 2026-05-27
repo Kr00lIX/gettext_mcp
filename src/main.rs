@@ -16,7 +16,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path: Option<PathBuf> = args.get(1).map(PathBuf::from);
 
     // Create store manager
-    let manager = Arc::new(gettext_mcp::GettextStoreManager::new(path));
+    let manager = Arc::new(gettext_mcp::GettextStoreManager::new(path.clone()));
+
+    // Best-effort cleanup of orphan `.gettext-mcp-*.tmp` files left over
+    // from previous crashed writes. Scans either the configured directory
+    // (directory mode) or the parent of the configured file (single-file
+    // mode). Falls back to CWD when no path was supplied.
+    let cleanup_dir: PathBuf = match path.as_ref() {
+        Some(p) if p.is_dir() => p.clone(),
+        Some(p) => p
+            .parent()
+            .map(|d| d.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(".")),
+        None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+    };
+    gettext_mcp::store::cleanup_orphan_tmps(&cleanup_dir);
 
     // If the path is a directory, scan for .po/.pot files
     if manager.is_directory_mode() {
