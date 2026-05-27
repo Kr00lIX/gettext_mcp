@@ -20,6 +20,7 @@ use rmcp::{
     service::RequestContext,
     tool, tool_handler, tool_router, RoleServer, ServerHandler,
 };
+use tokio::sync::Mutex;
 use tracing::error;
 
 use crate::service::GettextStoreManager;
@@ -31,25 +32,20 @@ use crate::tools::{
         DeleteTranslationParams, GetTranslationParams, ListTranslationsParams,
         UpsertTranslationParams,
     },
-    discover::{
-        handle_list_contexts, handle_list_files, ListContextsParams, ListFilesParams,
-    },
+    discover::{handle_list_contexts, handle_list_files, ListContextsParams, ListFilesParams},
     discover_files::{handle_discover_files, DiscoverFilesParams},
-    extract::{
-        handle_get_stale, handle_get_untranslated, GetStaleParams, GetUntranslatedParams,
+    extract::{handle_get_stale, handle_get_untranslated, GetStaleParams, GetUntranslatedParams},
+    glossary::{
+        handle_get_glossary, handle_update_glossary, GetGlossaryParams, UpdateGlossaryParams,
     },
-    header::{
-        handle_list_metadata, handle_set_header, ListMetadataParams, SetHeaderParams,
-    },
+    header::{handle_list_metadata, handle_set_header, ListMetadataParams, SetHeaderParams},
     metadata::{
         handle_set_comment, handle_set_flag, handle_set_fuzzy, SetCommentParams, SetFlagParams,
         SetFuzzyParams,
     },
     search::{handle_search_keys, SearchKeysParams},
     validate::{handle_validate_translations, ValidateTranslationsParams},
-    xliff::{
-        handle_export_xliff, handle_import_xliff, ExportXliffParams, ImportXliffParams,
-    },
+    xliff::{handle_export_xliff, handle_import_xliff, ExportXliffParams, ImportXliffParams},
 };
 
 /// MCP server for GNU gettext `.po`/`.pot` files. Holds the shared store
@@ -57,6 +53,11 @@ use crate::tools::{
 #[derive(Clone)]
 pub struct GettextMcpServer {
     manager: Arc<GettextStoreManager>,
+    /// Serializes glossary read-modify-write cycles so concurrent MCP
+    /// clients can't lose each other's updates. The PO store has its own
+    /// per-file locking; the glossary file does not, so we centralize it
+    /// here on the server.
+    glossary_write_lock: Arc<Mutex<()>>,
     tool_router: ToolRouter<Self>,
     prompt_router: PromptRouter<Self>,
 }
@@ -65,6 +66,7 @@ impl GettextMcpServer {
     pub fn new(manager: Arc<GettextStoreManager>) -> Self {
         Self {
             manager,
+            glossary_write_lock: Arc::new(Mutex::new(())),
             tool_router: Self::tool_router(),
             prompt_router: Self::prompt_router(),
         }
@@ -438,6 +440,42 @@ impl GettextMcpServer {
             }
         }
     }
+
+    #[tool(
+        name = "get_glossary",
+        description = "Look up preferred-translation terms for a `(source_locale, target_locale)` pair. The glossary lives at $GETTEXT_GLOSSARY_PATH (default: ./glossary.json) and is independent of any PO file. Optional `filter` is a case-insensitive substring matched against either the source term or its translation; a missing file yields an empty result rather than an error."
+    )]
+    async fn get_glossary(
+        &self,
+        Parameters(params): Parameters<GetGlossaryParams>,
+    ) -> Result<String, String> {
+        match handle_get_glossary(&self.manager, params).await {
+            Ok(value) => serde_json::to_string_pretty(&value)
+                .map_err(|e| format!("serialization error: {e}")),
+            Err(e) => {
+                error!(error = %e, "get_glossary failed");
+                Err(e.to_string())
+            }
+        }
+    }
+
+    #[tool(
+        name = "update_glossary",
+        description = "Upsert and/or remove glossary terms for a `(source_locale, target_locale)` pair. `entries` is a term→translation map (existing terms are overwritten); `delete` lists terms to remove (missing terms are ignored). The file is read, patched, and written atomically through the same FileStore the PO tools use."
+    )]
+    async fn update_glossary(
+        &self,
+        Parameters(params): Parameters<UpdateGlossaryParams>,
+    ) -> Result<String, String> {
+        match handle_update_glossary(&self.manager, &self.glossary_write_lock, params).await {
+            Ok(value) => serde_json::to_string_pretty(&value)
+                .map_err(|e| format!("serialization error: {e}")),
+            Err(e) => {
+                error!(error = %e, "update_glossary failed");
+                Err(e.to_string())
+            }
+        }
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -458,8 +496,9 @@ impl ServerHandler for GettextMcpServer {
              Additional tools: `get_coverage` (stats), `get_untranslated` and `get_stale` \
              (paginated review queues), `validate_translations` (format/plural/empty checks), \
              `search_keys` (paginated search), `discover_files` (scan a directory for \
-             .po/.pot files), and `export_xliff`/`import_xliff` (XLIFF 1.2 interchange — \
-             plurals and obsolete entries are skipped).",
+             .po/.pot files), `export_xliff`/`import_xliff` (XLIFF 1.2 interchange — \
+             plurals and obsolete entries are skipped), and `get_glossary`/`update_glossary` \
+             (shared term bank at $GETTEXT_GLOSSARY_PATH, default ./glossary.json).",
         )
     }
 }
@@ -882,7 +921,10 @@ mod tests {
             .unwrap();
         let entry = parse(&raw);
         assert_eq!(entry["msgstr"], "Bonjour");
-        assert!(entry["flags"].as_array().unwrap().contains(&json!("c-format")));
+        assert!(entry["flags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("c-format")));
     }
 
     #[tokio::test]
@@ -919,7 +961,10 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(parse(&raw)["flags"].as_array().unwrap().contains(&json!("c-format")));
+        assert!(parse(&raw)["flags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("c-format")));
 
         server
             .set_flag(Parameters(SetFlagParams {
@@ -940,7 +985,10 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(!parse(&raw)["flags"].as_array().unwrap().contains(&json!("c-format")));
+        assert!(!parse(&raw)["flags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("c-format")));
     }
 
     #[tokio::test]
@@ -1115,7 +1163,10 @@ mod tests {
         assert_eq!(plurals.len(), 2);
         assert_eq!(plurals[0], "%d fichier");
         assert_eq!(plurals[1], "%d fichiers");
-        assert!(entry["flags"].as_array().unwrap().contains(&json!("c-format")));
+        assert!(entry["flags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("c-format")));
     }
 
     #[tokio::test]
@@ -1126,7 +1177,10 @@ mod tests {
 
         let store = server.manager.store_for(None).await.unwrap();
         store.upsert("Hello", None, "Bonjour", None).await.unwrap();
-        store.upsert("Goodbye", None, "Au revoir", None).await.unwrap();
+        store
+            .upsert("Goodbye", None, "Au revoir", None)
+            .await
+            .unwrap();
         store.upsert("World", None, "Monde", None).await.unwrap();
 
         let raw = server

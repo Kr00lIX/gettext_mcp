@@ -4,6 +4,7 @@
 //! `manager` route file access through the [`crate::io::FileStore`]
 //! abstraction.
 
+pub mod glossary;
 pub mod manager;
 pub mod parser;
 pub mod serializer;

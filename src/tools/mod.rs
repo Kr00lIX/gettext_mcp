@@ -9,6 +9,7 @@ pub(crate) mod crud;
 pub(crate) mod discover;
 pub(crate) mod discover_files;
 pub(crate) mod extract;
+pub(crate) mod glossary;
 pub(crate) mod header;
 pub(crate) mod metadata;
 pub(crate) mod search;
