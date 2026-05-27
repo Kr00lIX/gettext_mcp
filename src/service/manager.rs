@@ -226,6 +226,14 @@ impl GettextStoreManager {
     pub fn base_dir(&self) -> Option<&Path> {
         self.default_path.as_deref().filter(|p| p.is_dir())
     }
+
+    /// Shared reference to the backing [`FileStore`]. Used by tools that
+    /// read or write auxiliary files (e.g. XLIFF documents) so they go
+    /// through the same I/O layer (atomic writes, advisory locking, BOM
+    /// stripping) as the PO files themselves.
+    pub fn file_store(&self) -> &Arc<dyn FileStore> {
+        &self.file_store
+    }
 }
 
 #[cfg(test)]

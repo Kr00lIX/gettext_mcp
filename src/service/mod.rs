@@ -8,6 +8,7 @@ pub mod manager;
 pub mod parser;
 pub mod serializer;
 pub mod store;
+pub mod xliff;
 
 pub use manager::GettextStoreManager;
 pub use store::GettextStore;

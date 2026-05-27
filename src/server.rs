@@ -47,6 +47,9 @@ use crate::tools::{
     },
     search::{handle_search_keys, SearchKeysParams},
     validate::{handle_validate_translations, ValidateTranslationsParams},
+    xliff::{
+        handle_export_xliff, handle_import_xliff, ExportXliffParams, ImportXliffParams,
+    },
 };
 
 /// MCP server for GNU gettext `.po`/`.pot` files. Holds the shared store
@@ -399,6 +402,42 @@ impl GettextMcpServer {
             }
         }
     }
+
+    #[tool(
+        name = "export_xliff",
+        description = "Export a PO file to an XLIFF 1.2 document. Skips plural entries (XLIFF 1.2 has no clean plural model) and obsolete entries. By default only untranslated/fuzzy entries are exported; set `include_translated=true` to emit every non-plural entry. The `output` path must end in .xliff, .xlf, or .xml."
+    )]
+    async fn export_xliff(
+        &self,
+        Parameters(params): Parameters<ExportXliffParams>,
+    ) -> Result<String, String> {
+        match handle_export_xliff(&self.manager, params).await {
+            Ok(value) => serde_json::to_string_pretty(&value)
+                .map_err(|e| format!("serialization error: {e}")),
+            Err(e) => {
+                error!(error = %e, "export_xliff failed");
+                Err(e.to_string())
+            }
+        }
+    }
+
+    #[tool(
+        name = "import_xliff",
+        description = "Import translations from an XLIFF 1.2 document into a PO file. Matches `<trans-unit>` entries to PO entries by msgid (and msgctxt when carried as a `gettext-msgctxt` note). Units with mismatched format specifiers are rejected; units that don't match any PO entry are reported as `unmatched`. Set `dry_run=true` to preview without writing; set `mark_fuzzy=true` to flag imported translations for review."
+    )]
+    async fn import_xliff(
+        &self,
+        Parameters(params): Parameters<ImportXliffParams>,
+    ) -> Result<String, String> {
+        match handle_import_xliff(&self.manager, params).await {
+            Ok(value) => serde_json::to_string_pretty(&value)
+                .map_err(|e| format!("serialization error: {e}")),
+            Err(e) => {
+                error!(error = %e, "import_xliff failed");
+                Err(e.to_string())
+            }
+        }
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -418,8 +457,9 @@ impl ServerHandler for GettextMcpServer {
              in single-file mode `path` is optional and defaults to the file passed at startup. \
              Additional tools: `get_coverage` (stats), `get_untranslated` and `get_stale` \
              (paginated review queues), `validate_translations` (format/plural/empty checks), \
-             `search_keys` (paginated search), and `discover_files` (scan a directory for \
-             .po/.pot files).",
+             `search_keys` (paginated search), `discover_files` (scan a directory for \
+             .po/.pot files), and `export_xliff`/`import_xliff` (XLIFF 1.2 interchange — \
+             plurals and obsolete entries are skipped).",
         )
     }
 }

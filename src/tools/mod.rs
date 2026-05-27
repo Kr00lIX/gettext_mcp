@@ -13,3 +13,4 @@ pub(crate) mod header;
 pub(crate) mod metadata;
 pub(crate) mod search;
 pub(crate) mod validate;
+pub(crate) mod xliff;
