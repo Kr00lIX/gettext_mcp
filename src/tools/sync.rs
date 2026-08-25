@@ -19,7 +19,7 @@ use serde_json::Value;
 
 use crate::error::GettextError;
 use crate::model::GettextFile;
-use crate::service::merger::{self, MergeOptions};
+use crate::service::merger::{self, MergeOptions, ReportDetail};
 use crate::service::parser;
 use crate::service::GettextStoreManager;
 
@@ -38,6 +38,14 @@ pub struct SyncWithPotParams {
     /// translator can re-review it. Set to `false` to keep the existing
     /// fuzzy/non-fuzzy state untouched on drift.
     pub mark_changed_as_fuzzy: Option<bool>,
+    /// How much of the report to return: `"summary"` (default) gives counts
+    /// plus a capped sample under `*_sample` keys, `"full"` gives every
+    /// `msgid` under `added`/`updated`/`obsoleted`.
+    ///
+    /// Summary is the default because a first merge of a large template runs
+    /// to thousands of entries, and that is exactly the merge whose dry run
+    /// you most want to read.
+    pub report: Option<String>,
 }
 
 pub(crate) async fn handle_sync_with_pot(
@@ -51,6 +59,8 @@ pub(crate) async fn handle_sync_with_pot(
     }
 
     let dry_run = params.dry_run.unwrap_or(false);
+    let detail =
+        ReportDetail::parse(params.report.as_deref()).map_err(GettextError::InvalidInput)?;
     let opts = MergeOptions {
         mark_changed_as_fuzzy: params.mark_changed_as_fuzzy.unwrap_or(true),
     };
@@ -88,7 +98,7 @@ pub(crate) async fn handle_sync_with_pot(
         persist_merge(&store, &target_snapshot, &merged).await?;
     }
 
-    Ok(merger::report_to_json(&report, dry_run))
+    Ok(merger::report_to_json(&report, dry_run, detail))
 }
 
 /// Rebuild a [`GettextFile`] snapshot from the store's public surface —
@@ -264,15 +274,21 @@ msgstr ""
                 pot_path: pot.to_str().unwrap().into(),
                 dry_run: Some(false),
                 mark_changed_as_fuzzy: None,
+                report: None,
             },
         )
         .await
         .unwrap();
 
-        assert_eq!(result["added"], serde_json::json!(["NewItem"]));
-        assert_eq!(result["obsoleted"], serde_json::json!(["Old"]));
+        assert_eq!(result["added_sample"], serde_json::json!(["NewItem"]));
+        assert_eq!(result["added_count"], 1);
+        assert_eq!(result["obsoleted_sample"], serde_json::json!(["Old"]));
+        assert_eq!(result["obsoleted_count"], 1);
         assert_eq!(result["unchanged"], 1);
         assert_eq!(result["dry_run"], false);
+        // Nothing was capped, so the flag says so rather than being absent.
+        assert_eq!(result["truncated"], false);
+        assert!(result.get("hint").is_none());
 
         // Refresh and verify on-disk state.
         let store = manager.store_for(None).await.unwrap();
@@ -321,13 +337,14 @@ msgstr ""
                 pot_path: pot.to_str().unwrap().into(),
                 dry_run: Some(true),
                 mark_changed_as_fuzzy: None,
+                report: None,
             },
         )
         .await
         .unwrap();
 
         assert_eq!(result["dry_run"], true);
-        assert_eq!(result["added"], serde_json::json!(["NewItem"]));
+        assert_eq!(result["added_sample"], serde_json::json!(["NewItem"]));
 
         // No mutation: Old must still exist with its translation.
         let old = store.get("Old", None).await.unwrap();
@@ -377,22 +394,133 @@ msgstr ""
                 pot_path: pot.to_str().unwrap().into(),
                 dry_run: Some(false),
                 mark_changed_as_fuzzy: None,
+                report: None,
             },
         )
         .await
         .unwrap();
 
-        assert!(result["added"]
+        assert!(result["added_sample"]
             .as_array()
             .unwrap()
             .iter()
             .any(|v| v == "NewString"));
         // Multiple entries must have been moved to obsolete.
-        let obsoleted = result["obsoleted"].as_array().unwrap();
-        assert!(!obsoleted.is_empty());
+        assert!(result["obsoleted_count"].as_u64().unwrap() > 0);
         // Hello still translated to Bonjour.
         let store = manager.store_for(None).await.unwrap();
         assert_eq!(store.get("Hello", None).await.unwrap().msgstr, "Bonjour");
+    }
+
+    /// A first merge of a large template is the case that motivated the
+    /// summary shape: the report that most needs reading is the one that was
+    /// unreadable. 137 KB across 3,634 lines, in the case that prompted it.
+    #[tokio::test]
+    async fn a_large_merge_reports_counts_and_a_capped_sample() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let po = dir.path().join("messages.po");
+        let pot = dir.path().join("messages.pot");
+
+        let manager = Arc::new(GettextStoreManager::new(Some(po.clone())));
+        let store = manager.store_for(None).await.unwrap();
+        store.set_header("Language", "nb-NO").await.unwrap();
+
+        let mut body = String::from("msgid \"\"\nmsgstr \"\"\n\n");
+        for n in 0..250 {
+            body.push_str(&format!("msgid \"key {n}\"\nmsgstr \"\"\n\n"));
+        }
+        write_pot(&pot, &body);
+
+        let result = handle_sync_with_pot(
+            &manager,
+            SyncWithPotParams {
+                path: Some(po.to_str().unwrap().into()),
+                pot_path: pot.to_str().unwrap().into(),
+                dry_run: Some(true),
+                mark_changed_as_fuzzy: None,
+                report: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        // The count is exact; the list is not, and says so.
+        assert_eq!(result["added_count"], 250);
+        assert_eq!(
+            result["added_sample"].as_array().unwrap().len(),
+            super::merger::SUMMARY_SAMPLE
+        );
+        assert_eq!(result["truncated"], true);
+        assert!(result["hint"].as_str().unwrap().contains("full"));
+
+        // And the full list is never silently under the plain key — a caller
+        // reading `added` must get all of it or nothing at all.
+        assert!(result.get("added").is_none());
+    }
+
+    #[tokio::test]
+    async fn report_full_returns_every_msgid() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let po = dir.path().join("messages.po");
+        let pot = dir.path().join("messages.pot");
+
+        let manager = Arc::new(GettextStoreManager::new(Some(po.clone())));
+        let store = manager.store_for(None).await.unwrap();
+        store.set_header("Language", "nb-NO").await.unwrap();
+
+        let mut body = String::from("msgid \"\"\nmsgstr \"\"\n\n");
+        for n in 0..250 {
+            body.push_str(&format!("msgid \"key {n}\"\nmsgstr \"\"\n\n"));
+        }
+        write_pot(&pot, &body);
+
+        let result = handle_sync_with_pot(
+            &manager,
+            SyncWithPotParams {
+                path: Some(po.to_str().unwrap().into()),
+                pot_path: pot.to_str().unwrap().into(),
+                dry_run: Some(true),
+                mark_changed_as_fuzzy: None,
+                report: Some("full".into()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["added"].as_array().unwrap().len(), 250);
+        assert_eq!(result["added_count"], 250);
+        // No sample keys in full mode: two lists of the same thing, one of them
+        // shorter, is an invitation to read the wrong one.
+        assert!(result.get("added_sample").is_none());
+        assert!(result.get("truncated").is_none());
+    }
+
+    /// A typo must not quietly hand back a truncated list. The caller who wrote
+    /// `report: "verbose"` wanted everything.
+    #[tokio::test]
+    async fn an_unknown_report_level_is_an_error_not_a_fallback() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let po = dir.path().join("messages.po");
+        let pot = dir.path().join("messages.pot");
+
+        let manager = Arc::new(GettextStoreManager::new(Some(po.clone())));
+        let _ = manager.store_for(None).await.unwrap();
+        write_pot(&pot, "msgid \"\"\nmsgstr \"\"\n");
+
+        let err = handle_sync_with_pot(
+            &manager,
+            SyncWithPotParams {
+                path: Some(po.to_str().unwrap().into()),
+                pot_path: pot.to_str().unwrap().into(),
+                dry_run: Some(true),
+                mark_changed_as_fuzzy: None,
+                report: Some("verbose".into()),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("summary"));
     }
 
     #[tokio::test]
@@ -428,12 +556,14 @@ msgstr ""
                 pot_path: pot.to_str().unwrap().into(),
                 dry_run: Some(false),
                 mark_changed_as_fuzzy: Some(true),
+                report: None,
             },
         )
         .await
         .unwrap();
 
-        assert_eq!(result["updated"], serde_json::json!(["%d cat"]));
+        assert_eq!(result["updated_sample"], serde_json::json!(["%d cat"]));
+        assert_eq!(result["updated_count"], 1);
         let store = manager.store_for(None).await.unwrap();
         let entry = store.get("%d cat", None).await.unwrap();
         assert!(entry.is_fuzzy(), "merge should mark drifted plural fuzzy");
@@ -455,6 +585,7 @@ msgstr ""
                 pot_path: "".into(),
                 dry_run: None,
                 mark_changed_as_fuzzy: None,
+                report: None,
             },
         )
         .await;

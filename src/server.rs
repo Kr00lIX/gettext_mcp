@@ -481,7 +481,7 @@ impl GettextMcpServer {
 
     #[tool(
         name = "sync_with_pot",
-        description = "Merge a POT template into a PO file (in-house `msgmerge`). New POT entries become untranslated rows in the PO; entries dropped from the POT move to the obsolete (`#~`) block while keeping their translation for revival. Source-side metadata (msgid_plural, source locations, extracted comments) is taken from the POT; translator-side fields (msgstr, translator comments, flags) come from the PO. Entries whose `msgid_plural` changed are marked `fuzzy` by default — pass `mark_changed_as_fuzzy=false` to disable. `POT-Creation-Date` is synced from POT when present. Set `dry_run=true` to see the report without writing."
+        description = "Merge a POT template into a PO file (in-house `msgmerge`). New POT entries become untranslated rows in the PO; entries dropped from the POT move to the obsolete (`#~`) block while keeping their translation for revival. Source-side metadata (msgid_plural, source locations, extracted comments) is taken from the POT; translator-side fields (msgstr, translator comments, flags) come from the PO. Entries whose `msgid_plural` changed are marked `fuzzy` by default — pass `mark_changed_as_fuzzy=false` to disable. `POT-Creation-Date` is synced from POT when present. Set `dry_run=true` to see the report without writing. The report is a SUMMARY by default — `added_count`/`updated_count`/`obsoleted_count` plus a 20-entry `*_sample` and a `truncated` flag — because a first merge of a large template runs to thousands of msgids and would otherwise be unreadable in exactly the case a dry run matters most. Pass `report='full'` for every msgid under `added`/`updated`/`obsoleted`; the truncated lists are never served under those plain keys, so a complete-looking list always is one."
     )]
     async fn sync_with_pot(
         &self,
@@ -538,7 +538,11 @@ impl ServerHandler for GettextMcpServer {
              plurals and obsolete entries are skipped), `get_glossary`/`update_glossary` \
              (shared term bank at $GETTEXT_GLOSSARY_PATH, default ./glossary.json), and \
              `sync_with_pot`/`compile_mo` (in-house `msgmerge`/`msgfmt`: merge a POT \
-             template into a PO, or compile a PO into a binary `.mo`).",
+             template into a PO, or compile a PO into a binary `.mo`). A `sync_with_pot` \
+             that drops entries does NOT delete them — they move to the obsolete (`#~`) \
+             block with their translation intact, so the operation is recoverable. \
+             Paths are resolved against the manager's base directory; an absolute path \
+             is rejected unless a base directory is configured, so pass a relative one.",
         )
     }
 }

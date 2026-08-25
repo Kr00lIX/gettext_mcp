@@ -247,18 +247,105 @@ fn append_obsolete(obsolete: &mut Vec<String>, entry: &MessageEntry) {
     }
 }
 
+/// How much of the merge report to put on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReportDetail {
+    /// Counts plus a capped sample of each list. The default.
+    #[default]
+    Summary,
+    /// Every `msgid`, in full.
+    Full,
+}
+
+impl ReportDetail {
+    /// Parse the wire value. Unknown strings are an error rather than a
+    /// silent fallback: a caller who typed `"verbose"` wants the full list
+    /// and would otherwise get a truncated one that looks complete.
+    pub fn parse(value: Option<&str>) -> Result<Self, String> {
+        match value.map(str::trim) {
+            None | Some("") | Some("summary") => Ok(Self::Summary),
+            Some("full") => Ok(Self::Full),
+            Some(other) => Err(format!(
+                "report must be \"summary\" or \"full\", got {other:?}"
+            )),
+        }
+    }
+}
+
+/// How many `msgid`s each list contributes in [`ReportDetail::Summary`].
+///
+/// Twenty is enough to recognise *what kind* of entries moved — which is the
+/// question a dry run is usually asked — without the answer being unreadable.
+pub const SUMMARY_SAMPLE: usize = 20;
+
 /// Convenience: convert a [`MergeReport`] to the JSON shape the MCP tool
 /// returns. Lives here so the merger module is the single source of truth
 /// for the report wire format.
-pub fn report_to_json(report: &MergeReport, dry_run: bool) -> serde_json::Value {
-    serde_json::json!({
-        "added": report.added,
-        "updated": report.updated,
-        "obsoleted": report.obsoleted,
+///
+/// # Why the summary shape uses different keys
+///
+/// A first merge of a large template produces thousands of `added` msgids —
+/// one real case ran to 137 KB across 3,634 lines, which is past what an MCP
+/// client can put in front of a model. So the merge whose preview matters most
+/// is the one whose preview is unusable, which inverts the point of `dry_run`.
+///
+/// The summary therefore reports `added_count` + `added_sample`, **not** a
+/// shortened `added`. Truncating an array under its original key would be the
+/// worst of the options: a caller reading twenty entries under `added` has no
+/// way to know that is not all of them, and would act on a complete-looking
+/// list. Different keys make the truncation impossible to miss, and
+/// `report: "full"` is there when the whole list is genuinely wanted.
+pub fn report_to_json(
+    report: &MergeReport,
+    dry_run: bool,
+    detail: ReportDetail,
+) -> serde_json::Value {
+    let mut json = serde_json::json!({
+        "added_count": report.added.len(),
+        "updated_count": report.updated.len(),
+        "obsoleted_count": report.obsoleted.len(),
         "unchanged": report.unchanged,
         "fuzzy_count_after": report.fuzzy_count_after,
         "dry_run": dry_run,
-    })
+    });
+
+    let map = json.as_object_mut().expect("json! built an object");
+
+    match detail {
+        ReportDetail::Full => {
+            map.insert("added".into(), serde_json::json!(report.added));
+            map.insert("updated".into(), serde_json::json!(report.updated));
+            map.insert("obsoleted".into(), serde_json::json!(report.obsoleted));
+        }
+        ReportDetail::Summary => {
+            let truncated = [&report.added, &report.updated, &report.obsoleted]
+                .iter()
+                .any(|list| list.len() > SUMMARY_SAMPLE);
+
+            map.insert("added_sample".into(), sample(&report.added));
+            map.insert("updated_sample".into(), sample(&report.updated));
+            map.insert("obsoleted_sample".into(), sample(&report.obsoleted));
+            // Stated even when false, so its absence never has to be
+            // interpreted — a missing key and `false` read the same to a
+            // careless consumer, and only one of them is a claim.
+            map.insert("truncated".into(), serde_json::json!(truncated));
+
+            if truncated {
+                map.insert(
+                    "hint".into(),
+                    serde_json::json!(format!(
+                        "lists capped at {SUMMARY_SAMPLE}; pass report=\"full\" for every msgid"
+                    )),
+                );
+            }
+        }
+    }
+
+    json
+}
+
+fn sample(list: &[String]) -> serde_json::Value {
+    serde_json::json!(list.iter().take(SUMMARY_SAMPLE).collect::<Vec<_>>())
 }
 
 /// Build a `(msgid, msgctxt)` lookup over the merged file, used by tests.
