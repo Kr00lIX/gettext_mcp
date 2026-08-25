@@ -5,6 +5,7 @@
 //! abstraction.
 
 pub mod glossary;
+pub mod locale;
 pub mod manager;
 pub mod merger;
 pub mod mo_writer;

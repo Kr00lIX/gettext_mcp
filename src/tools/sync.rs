@@ -19,6 +19,7 @@ use serde_json::Value;
 
 use crate::error::GettextError;
 use crate::model::GettextFile;
+use crate::service::locale;
 use crate::service::merger::{self, MergeOptions, ReportDetail};
 use crate::service::parser;
 use crate::service::GettextStoreManager;
@@ -81,7 +82,19 @@ pub(crate) async fn handle_sync_with_pot(
     let store = manager.store_for(params.path.as_deref()).await?;
     let target_snapshot = build_file_snapshot(&store).await?;
 
-    let (merged, report) = merger::merge(&target_snapshot, &pot_file, opts);
+    let (mut merged, report) = merger::merge(&target_snapshot, &pot_file, opts);
+
+    // Seed the header of a catalog that has none. `merge` deliberately carries
+    // the target's header forward so a translator's `Language`, `Plural-Forms`
+    // and `Last-Translator` survive — but a target that did not exist has no
+    // header to carry, and lands empty.
+    //
+    // A missing `Plural-Forms` is not cosmetic: it sends the consuming
+    // toolchain looking for the rule elsewhere, and some of them raise rather
+    // than guess. So we fill both in, and ONLY when absent — never overwriting
+    // what a translator set, which would silently undo the very thing `merge`
+    // takes care to preserve.
+    let seeded = seed_header(&mut merged, params.path.as_deref(), &store).await;
 
     if !dry_run {
         // Persist the merged file by replacing the store's state. We
@@ -98,7 +111,103 @@ pub(crate) async fn handle_sync_with_pot(
         persist_merge(&store, &target_snapshot, &merged).await?;
     }
 
-    Ok(merger::report_to_json(&report, dry_run, detail))
+    let mut json = merger::report_to_json(&report, dry_run, detail);
+    if let Some(obj) = json.as_object_mut() {
+        if let Some(language) = seeded.language {
+            obj.insert("seeded_language".into(), Value::String(language));
+        }
+        if let Some(forms) = seeded.plural_forms {
+            obj.insert("seeded_plural_forms".into(), Value::String(forms));
+        }
+        if let Some(note) = seeded.note {
+            obj.insert("header_note".into(), Value::String(note));
+        }
+    }
+
+    Ok(json)
+}
+
+/// What `seed_header` filled in, for the report.
+#[derive(Debug, Default)]
+struct SeededHeader {
+    language: Option<String>,
+    plural_forms: Option<String>,
+    note: Option<String>,
+}
+
+/// Fill in `Language` and `Plural-Forms` when the target carries neither.
+///
+/// Only when absent. A translator who set either — or who deliberately left a
+/// non-standard rule — must not have it rewritten by a merge, which is the same
+/// contract [`merger::merge`] keeps for the rest of the header.
+///
+/// `Language` comes from the catalog's own path, by the gettext directory
+/// convention. A path that does not have that shape yields nothing rather than a
+/// guess, because a wrong `Language` is a thing a translator then has to notice.
+///
+/// `Plural-Forms` is emitted only for the language families whose expression is
+/// unambiguous. Where it is declined, the report says so — a caller who needs one
+/// is told to set it rather than left to discover the omission from a toolchain
+/// error much later. See [`crate::service::locale`] for why guessing the Slavic
+/// and Celtic rules would be worse than abstaining.
+async fn seed_header(
+    merged: &mut GettextFile,
+    path: Option<&str>,
+    store: &crate::service::GettextStore,
+) -> SeededHeader {
+    let mut seeded = SeededHeader::default();
+
+    let has_language = merged
+        .metadata
+        .get("Language")
+        .is_some_and(|v| !v.trim().is_empty());
+    let has_plural_forms = merged
+        .metadata
+        .get("Plural-Forms")
+        .is_some_and(|v| !v.trim().is_empty());
+
+    // No early return on "both already set". The per-field guards below are the
+    // real protection, and a second one in front of them only looks like the
+    // protection — removing either alone leaves the behaviour correct, which is
+    // exactly what makes a redundant guard read as load-bearing to the next
+    // person to touch it.
+
+    // `store.path()` is the authoritative target — in single-file mode the caller
+    // passes no `path` at all, and seeding from the store keeps both modes working.
+    let target_path = path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| store.path().to_path_buf());
+    let Some(language) = locale::language_from_path(&target_path) else {
+        seeded.note = Some(
+            "no Language/Plural-Forms header: the path is not <locale>/LC_MESSAGES/<domain>.po,              so the locale could not be derived. Set both with set_header."
+                .into(),
+        );
+        return seeded;
+    };
+
+    if !has_language {
+        merged.metadata.insert("Language".into(), language.clone());
+        seeded.language = Some(language.clone());
+    }
+
+    if !has_plural_forms {
+        match locale::plural_forms_header(&language) {
+            Some(forms) => {
+                merged
+                    .metadata
+                    .insert("Plural-Forms".into(), forms.to_string());
+                seeded.plural_forms = Some(forms.to_string());
+            }
+            None => {
+                seeded.note = Some(format!(
+                    "Plural-Forms not seeded for {language}: its plural rule is one this crate                      declines to guess (the CLDR category count and the conventional PO                      expression disagree). Set it with set_header before translating plurals."
+                ));
+            }
+        }
+    }
+
+    merged.rebuild_header_entry();
+    seeded
 }
 
 /// Rebuild a [`GettextFile`] snapshot from the store's public surface —
@@ -521,6 +630,189 @@ msgstr ""
         .unwrap_err();
 
         assert!(err.to_string().contains("summary"));
+    }
+
+    /// The bug this fixes: `merge` preserves the target's header, and a target
+    /// that does not exist has none — so a catalog created from scratch landed
+    /// with no `Language` and no `Plural-Forms`. Downstream that is not
+    /// cosmetic; a missing `Plural-Forms` made Elixir's Gettext compiler ask
+    /// its pluralizer, which rejects hyphenated tags, and the application
+    /// stopped compiling.
+    #[tokio::test]
+    async fn a_catalog_created_from_scratch_gets_its_headers() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let locale_dir = dir.path().join("nb-NO").join("LC_MESSAGES");
+        std::fs::create_dir_all(&locale_dir).unwrap();
+        let po = locale_dir.join("default.po");
+        // Beside the PO: the manager's base directory is the target file, so a
+        // template above it fails path validation.
+        let pot = locale_dir.join("default.pot");
+
+        let manager = Arc::new(GettextStoreManager::new(Some(po.clone())));
+        write_pot(
+            &pot,
+            "msgid \"\"\nmsgstr \"\"\n\nmsgid \"Hello\"\nmsgstr \"\"\n",
+        );
+
+        let result = handle_sync_with_pot(
+            &manager,
+            SyncWithPotParams {
+                path: Some(po.to_str().unwrap().into()),
+                pot_path: pot.to_str().unwrap().into(),
+                dry_run: None,
+                mark_changed_as_fuzzy: None,
+                report: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["seeded_language"], "nb-NO");
+        assert_eq!(
+            result["seeded_plural_forms"],
+            "nplurals=2; plural=(n != 1);"
+        );
+
+        let store = manager.store_for(None).await.unwrap();
+        let meta = store.metadata().await.unwrap();
+        assert_eq!(meta.get("Language").map(String::as_str), Some("nb-NO"));
+        assert_eq!(
+            meta.get("Plural-Forms").map(String::as_str),
+            Some("nplurals=2; plural=(n != 1);")
+        );
+    }
+
+    /// The other half, and the more important one. `merge` takes care to carry
+    /// a translator's header forward; seeding must not undo that.
+    #[tokio::test]
+    async fn an_existing_header_is_never_overwritten() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let locale_dir = dir.path().join("nb-NO").join("LC_MESSAGES");
+        std::fs::create_dir_all(&locale_dir).unwrap();
+        let po = locale_dir.join("default.po");
+        // Beside the PO: the manager's base directory is the target file, so a
+        // template above it fails path validation.
+        let pot = locale_dir.join("default.pot");
+
+        let manager = Arc::new(GettextStoreManager::new(Some(po.clone())));
+        let store = manager.store_for(None).await.unwrap();
+        // A deliberately non-standard rule — the case where guessing would do
+        // real damage, because it looks wrong and is not.
+        store.set_header("Language", "nb").await.unwrap();
+        store
+            .set_header(
+                "Plural-Forms",
+                "nplurals=3; plural=(n==1 ? 0 : n==2 ? 1 : 2);",
+            )
+            .await
+            .unwrap();
+
+        write_pot(
+            &pot,
+            "msgid \"\"\nmsgstr \"\"\n\nmsgid \"Hello\"\nmsgstr \"\"\n",
+        );
+
+        let result = handle_sync_with_pot(
+            &manager,
+            SyncWithPotParams {
+                path: Some(po.to_str().unwrap().into()),
+                pot_path: pot.to_str().unwrap().into(),
+                dry_run: None,
+                mark_changed_as_fuzzy: None,
+                report: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(result.get("seeded_language").is_none());
+        assert!(result.get("seeded_plural_forms").is_none());
+
+        let meta = store.metadata().await.unwrap();
+        assert_eq!(meta.get("Language").map(String::as_str), Some("nb"));
+        assert_eq!(
+            meta.get("Plural-Forms").map(String::as_str),
+            Some("nplurals=3; plural=(n==1 ? 0 : n==2 ? 1 : 2);")
+        );
+    }
+
+    /// A language whose plural rule this crate declines to guess gets its
+    /// `Language` and an explicit note, rather than a header whose two halves
+    /// describe different schemes.
+    #[tokio::test]
+    async fn a_declined_plural_rule_is_reported_not_invented() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let locale_dir = dir.path().join("uk").join("LC_MESSAGES");
+        std::fs::create_dir_all(&locale_dir).unwrap();
+        let po = locale_dir.join("default.po");
+        // Beside the PO: the manager's base directory is the target file, so a
+        // template above it fails path validation.
+        let pot = locale_dir.join("default.pot");
+
+        let manager = Arc::new(GettextStoreManager::new(Some(po.clone())));
+        write_pot(
+            &pot,
+            "msgid \"\"\nmsgstr \"\"\n\nmsgid \"Hello\"\nmsgstr \"\"\n",
+        );
+
+        let result = handle_sync_with_pot(
+            &manager,
+            SyncWithPotParams {
+                path: Some(po.to_str().unwrap().into()),
+                pot_path: pot.to_str().unwrap().into(),
+                dry_run: None,
+                mark_changed_as_fuzzy: None,
+                report: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["seeded_language"], "uk");
+        assert!(result.get("seeded_plural_forms").is_none());
+        assert!(result["header_note"]
+            .as_str()
+            .unwrap()
+            .contains("set_header"));
+
+        let store = manager.store_for(None).await.unwrap();
+        let meta = store.metadata().await.unwrap();
+        assert_eq!(meta.get("Language").map(String::as_str), Some("uk"));
+        assert!(meta.get("Plural-Forms").is_none());
+    }
+
+    /// A path outside the gettext directory convention yields no locale, so
+    /// nothing is seeded and the report says why.
+    #[tokio::test]
+    async fn a_non_conventional_path_seeds_nothing_and_says_so() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let po = dir.path().join("messages.po");
+        let pot = dir.path().join("messages.pot");
+
+        let manager = Arc::new(GettextStoreManager::new(Some(po.clone())));
+        write_pot(
+            &pot,
+            "msgid \"\"\nmsgstr \"\"\n\nmsgid \"Hello\"\nmsgstr \"\"\n",
+        );
+
+        let result = handle_sync_with_pot(
+            &manager,
+            SyncWithPotParams {
+                path: Some(po.to_str().unwrap().into()),
+                pot_path: pot.to_str().unwrap().into(),
+                dry_run: None,
+                mark_changed_as_fuzzy: None,
+                report: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(result.get("seeded_language").is_none());
+        assert!(result["header_note"]
+            .as_str()
+            .unwrap()
+            .contains("LC_MESSAGES"));
     }
 
     #[tokio::test]
